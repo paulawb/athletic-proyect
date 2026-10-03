@@ -46,7 +46,9 @@ jobs:
 
       - name: Crear APK de prueba
         working-directory: frontend/android
-        run: ./gradlew assembleDebug
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
       - name: Publicar APK como artefacto descargable
         uses: actions/upload-artifact@v4
