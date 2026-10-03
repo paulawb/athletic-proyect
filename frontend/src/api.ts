@@ -39,6 +39,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const response = await request(`${API_ROOT}${path}`, { ...init, headers });
   if (!response.ok) throw await apiError(response, `Error de API (${response.status})`);
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
