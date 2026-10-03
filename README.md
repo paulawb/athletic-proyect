@@ -405,6 +405,9 @@ en caché respuestas privadas de la API ni videos. Para iniciar sesión y
 procesar videos se necesita conexión y un backend público activo. El backend,
 PostgreSQL, almacenamiento persistente de videos y modelo de pose también
 deben desplegarse en un servidor; publicar solo `frontend/dist` no basta.
+En Android, Capacitor sirve el frontend desde `https://localhost`; ese origen
+debe estar permitido en `CORS_ORIGINS` del backend para que el APK pueda llamar
+a la API.
 
 ### APK instalable en Android
 

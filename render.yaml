@@ -25,7 +25,7 @@ services:
       - key: MAX_VIDEO_SIZE_MB
         value: "100"
       - key: CORS_ORIGINS
-        value: ""
+        value: "http://localhost:5173,http://127.0.0.1:5173,https://localhost"
 
 databases:
   - name: athletic-analysis-db
