@@ -406,21 +406,73 @@ procesar videos se necesita conexión y un backend público activo. El backend,
 PostgreSQL, almacenamiento persistente de videos y modelo de pose también
 deben desplegarse en un servidor; publicar solo `frontend/dist` no basta.
 
+### APK instalable en Android
+
+El proyecto incluye un contenedor Android con Capacitor. El APK contiene la
+interfaz, pero **no** incluye la API ni la base de datos: el teléfono necesita
+internet y una URL HTTPS pública para usar todas las funciones. Primero
+despliega el backend (por ejemplo, con el Blueprint de Render) y ten a mano la
+URL pública que Render asigne al servicio.
+
+La forma más sencilla de obtener el APK es usar el flujo **Crear APK Android**
+de GitHub Actions. Publica primero estos cambios en GitHub; luego abre la
+pestaña **Actions**, elige **Crear APK Android**, pulsa **Run workflow** y
+escribe la URL HTTPS pública cuando se solicite. Al terminar, descarga
+`athletic-analysis-android-apk` en **Artifacts**. El archivo estará disponible
+durante 7 días.
+
+También se puede compilar localmente. En Windows, instala Android Studio y sus
+componentes Android SDK. Después, en PowerShell:
+
+```powershell
+cd frontend
+npm install
+$env:VITE_API_URL = "https://tu-servicio.onrender.com"
+npm run android:sync
+npm run android:open
+```
+
+En Android Studio, espera la sincronización de Gradle y selecciona **Build >
+Build Bundle(s) / APK(s) > Build APK(s)**. El APK de prueba queda en
+`frontend/android/app/build/outputs/apk/debug/app-debug.apk`. Copia ese archivo
+al celular Android e instálalo; el teléfono puede pedir autorización para
+instalar aplicaciones procedentes de esa fuente. Este APK de depuración sirve
+para pruebas y sustentación, no es una versión firmada de distribución
+comercial. Cada vez que cambie la URL o el frontend, vuelve a compilar el APK
+con la URL actualizada.
+
 ### Despliegue integrado en Render
 
 El archivo `render.yaml` define una API que también sirve la interfaz compilada
 en el mismo dominio HTTPS. Así el celular usa una sola dirección para la PWA y
-la API, y el despliegue conserva los videos y el modelo en un disco persistente.
-El blueprint crea un servicio web de pago, un disco de 10 GB y PostgreSQL; revisa
-el precio actual en Render antes de confirmar la creación.
+la API. La configuración actual es una **demo gratuita temporal**: no incluye
+disco persistente, guarda videos y el modelo en almacenamiento temporal y limita
+la carga a 100 MB. Los videos pueden desaparecer al reiniciarse, suspenderse o
+desplegarse el servicio.
+
+Render suspende el servicio web gratuito tras 15 minutos sin tráfico y puede
+tardar alrededor de un minuto en volver a responder. PostgreSQL gratuito tiene
+un límite de 1 GB y expira a los 30 días. Hay 14 días adicionales para
+actualizarlo; después Render elimina la base y sus datos. No tiene copias de
+seguridad.
+El servicio web gratuito tiene 512 MB de RAM, por lo que el procesamiento de
+video con MediaPipe puede reiniciarse si supera la memoria disponible. Esta
+configuración sirve para probar la interfaz y el flujo, no para conservar
+información ni para uso institucional.
+
+Para un despliegue de uso continuo se necesitará un plan de pago y almacenamiento
+persistente. Revisa los precios y las condiciones actuales de Render antes de
+crear recursos o agregar un método de pago.
 
 Render necesita que el código esté en un repositorio GitHub conectado a la
 cuenta. Esta carpeta local no se publica automáticamente. Cuando el repositorio
 esté disponible, en Render elige **New + > Blueprint**, conecta el repositorio
 y confirma los recursos de `render.yaml`. El primer arranque descarga el modelo
-de pose y aplica las migraciones de la base de datos. Luego abre la URL HTTPS
+de pose y aplica las migraciones de la base de datos. El modelo se descargará
+de nuevo cuando el almacenamiento temporal se pierda. Luego abre la URL HTTPS
 que Render muestra para el servicio y usa las instrucciones de instalación
-anteriores en cada celular.
+anteriores en cada celular. Antes de cargar datos reales, ten en cuenta los
+límites y la caducidad de la demo gratuita descritos arriba.
 
 Para este despliegue, Docker compila la web junto con la API. `.dockerignore`
 excluye `.env`, videos locales, modelos y dependencias locales: no subas secretos

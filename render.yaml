@@ -2,15 +2,11 @@ services:
   - type: web
     name: athletic-analysis
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
     dockerCommand: sh scripts/start_render.sh
     healthCheckPath: /health
-    disk:
-      name: athletic-analysis-data
-      mountPath: /var/data
-      sizeGB: 10
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -21,11 +17,13 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: STORAGE_LOCAL_PATH
-        value: /var/data
+        value: /tmp/athletic-analysis
       - key: MEDIAPIPE_MODEL_PATH
-        value: /var/data/models/pose_landmarker_lite.task
+        value: /tmp/athletic-analysis/models/pose_landmarker_lite.task
       - key: POSE_ESTIMATOR_BACKEND
         value: mediapipe
+      - key: MAX_VIDEO_SIZE_MB
+        value: "100"
       - key: CORS_ORIGINS
         value: ""
 
@@ -33,5 +31,5 @@ databases:
   - name: athletic-analysis-db
     databaseName: athletic_analysis
     user: athletic_analysis
-    plan: basic-256mb
+    plan: free
     postgresMajorVersion: "16"

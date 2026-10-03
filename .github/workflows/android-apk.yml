@@ -1,0 +1,57 @@
+name: Crear APK Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: URL HTTPS pública del servicio (por ejemplo, https://athletic-analysis.onrender.com)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Preparar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar dependencias web
+        working-directory: frontend
+        run: npm ci
+
+      - name: Compilar y sincronizar la app Android
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ inputs.api_url }}
+        run: npm run android:sync
+
+      - name: Crear APK de prueba
+        working-directory: frontend/android
+        run: ./gradlew assembleDebug
+
+      - name: Publicar APK como artefacto descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: athletic-analysis-android-apk
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
