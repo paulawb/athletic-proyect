@@ -1,0 +1,36 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/.env.local
+frontend/.env.production.local
+
+# Videos y resultados generados (nunca a git)
+storage/videos/*
+storage/procesado/*
+storage/informes/*
+storage/biblioteca/*
+storage/institucion/*
+!storage/videos/.gitkeep
+!storage/procesado/.gitkeep
+!storage/informes/.gitkeep
+!storage/biblioteca/.gitkeep
+!storage/institucion/.gitkeep
+
+# Modelo de MediaPipe (Fase 9): se descarga con scripts/download_pose_model.py,
+# no se versiona (varios MB).
+models/*.task

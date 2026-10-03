@@ -1,0 +1,1 @@
+from app.infrastructure.database.models import workspace_model  # noqa: F401

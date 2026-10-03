@@ -1,0 +1,26 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+email-validator==2.2.0
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+bcrypt==4.0.1
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.20
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+# Fijado en 0.10.21 a proposito: versiones posteriores (entre 0.10.21 y
+# 0.10.35) agregaron llamadas de telemetria a servidores de Google. Como
+# este sistema procesa video de atletas (algunos menores, segun las
+# categorias de las maquetas), evitamos esas llamadas de red por defecto.
+# Si no te preocupa, podes subir de version sin problema.
+mediapipe==0.10.21
+# Informes en PDF con graficos (Fase 11)
+reportlab==4.2.5
+matplotlib==3.9.2
+openpyxl==3.1.5
+pytest==8.3.4
+pytest-asyncio==0.25.0
+httpx==0.28.1
