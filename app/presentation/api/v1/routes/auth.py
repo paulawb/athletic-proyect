@@ -24,7 +24,7 @@ class UserRegistrationDTO(BaseModel):
     email: EmailStr
     phone: str = Field(min_length=7, max_length=20)
     password: str = Field(min_length=10, max_length=72)
-    role: Literal["docente", "estudiante"]
+    role: Literal["docente"] = "docente"
 
     @field_validator("full_name")
     @classmethod

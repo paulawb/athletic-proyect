@@ -19,7 +19,7 @@ services:
       - key: STORAGE_LOCAL_PATH
         value: /tmp/athletic-analysis
       - key: MEDIAPIPE_MODEL_PATH
-        value: /tmp/athletic-analysis/models/pose_landmarker_lite.task
+        value: /tmp/athletic-analysis/models/pose_landmarker_full.task
       - key: POSE_ESTIMATOR_BACKEND
         value: mediapipe
       - key: MAX_VIDEO_SIZE_MB

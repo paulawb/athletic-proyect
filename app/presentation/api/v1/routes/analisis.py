@@ -13,7 +13,6 @@ from app.application.use_cases.create_analysis import CreateAnalysis
 from app.application.use_cases.generate_analysis_report import GenerateAnalysisReport
 from app.application.use_cases.get_analysis import GetAnalysis
 from app.application.use_cases.get_analysis_metrics import GetAnalysisMetrics
-from app.application.use_cases.list_analyses import ListAnalyses
 from app.application.use_cases.process_video_frames import CalibratorFactory, ProcessVideoFrames
 from app.application.use_cases.upload_video import UploadVideo
 from app.domain.dto.process_video_dto import ProcessVideoResponseDTO
@@ -46,6 +45,13 @@ from app.infrastructure.video.opencv_frame_processor import OpenCVFrameProcessor
 from app.infrastructure.vision.mediapipe_pose_estimator import MediaPipePoseEstimator
 from app.infrastructure.vision.mock_pose_estimator import MockPoseEstimator
 from app.presentation.api.v1.dependencies import get_current_user
+from app.presentation.api.v1.ownership import (
+    owned_analysis_query,
+    require_owned_analysis,
+    require_owned_test,
+    require_owned_video,
+    user_id,
+)
 
 router = APIRouter(prefix="/api/v1/analisis", tags=["analisis"])
 
@@ -59,6 +65,7 @@ def _build_pose_estimator(settings: Settings) -> PoseEstimator:
         return MediaPipePoseEstimator(
             model_path=settings.mediapipe_model_path,
             min_detection_confidence=settings.mediapipe_min_detection_confidence,
+            min_presence_confidence=settings.mediapipe_min_presence_confidence,
             min_tracking_confidence=settings.mediapipe_min_tracking_confidence,
         )
     return MockPoseEstimator()
@@ -123,7 +130,7 @@ async def create_analysis(
     data: AnalysisCreateDTO,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> AnalysisCreatedResponseDTO:
     """Fase 8 (secciones 12-13): crea el Analysis en PENDING y encola el
     procesamiento real; responde de inmediato sin esperar a que termine.
@@ -133,6 +140,7 @@ async def create_analysis(
     despues de que las BackgroundTasks terminan, no antes, precisamente
     para permitir este patron.
     """
+    await require_owned_video(session, data.video_id, user_id(current_user))
     analysis = await CreateAnalysis(
         video_repository=SqlAlchemyVideoRepository(session),
         analysis_repository=SqlAlchemyAnalysisRepository(session),
@@ -155,10 +163,22 @@ async def list_analyses(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[AnalysisResponseDTO]:
     repository = SqlAlchemyAnalysisRepository(session)
-    analyses = await ListAnalyses(repository).execute(skip=skip, limit=limit)
+    analysis_models = (
+        await session.execute(
+            owned_analysis_query(user_id(current_user))
+            .order_by(AnalysisModel.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+    ).scalars().all()
+    analyses = [
+        analysis
+        for model in analysis_models
+        if (analysis := await repository.get_by_id(model.id)) is not None
+    ]
     return [AnalysisResponseDTO.model_validate(a) for a in analyses]
 
 
@@ -166,11 +186,12 @@ async def list_analyses(
 async def get_analysis(
     analysis_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> AnalysisResponseDTO:
     """Fase 8: este es el endpoint que el frontend debe sondear (polling)
     para ver como avanza processed_frames/progress_percentage hasta que
     status pase a COMPLETED o FAILED."""
+    await require_owned_analysis(session, analysis_id, user_id(current_user))
     repository = SqlAlchemyAnalysisRepository(session)
     analysis = await GetAnalysis(repository).execute(analysis_id)
     return AnalysisResponseDTO.model_validate(analysis)
@@ -180,11 +201,12 @@ async def get_analysis(
 async def get_analysis_metrics(
     analysis_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> AnalysisMetricsResponseDTO:
     """Fase 7: las metricas ya persistidas (seccion 14-15). 404 si el
     analisis no existe, o si existe pero todavia no tiene metricas (por
     ejemplo, sigue en PENDING/PROCESSING, o termino en FAILED)."""
+    await require_owned_analysis(session, analysis_id, user_id(current_user))
     analysis_repository = SqlAlchemyAnalysisRepository(session)
     metrics_repository = SqlAlchemyMetricsRepository(session)
     metrics = await GetAnalysisMetrics(analysis_repository, metrics_repository).execute(analysis_id)
@@ -195,11 +217,9 @@ async def get_analysis_metrics(
 async def get_analysis_frames(
     analysis_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
-    analysis = await session.get(AnalysisModel, analysis_id)
-    if analysis is None:
-        raise HTTPException(status_code=404, detail="Análisis no encontrado")
+    analysis = await require_owned_analysis(session, analysis_id, user_id(current_user))
     video = await session.get(VideoModel, analysis.video_id)
     frames = (
         await session.execute(
@@ -235,8 +255,11 @@ async def compare_analyses(
     analysis_id: int,
     other_analysis_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
+    owner_id = user_id(current_user)
+    await require_owned_analysis(session, analysis_id, owner_id)
+    await require_owned_analysis(session, other_analysis_id, owner_id)
     first = await session.scalar(select(MetricsModel).where(MetricsModel.analysis_id == analysis_id))
     second = await session.scalar(
         select(MetricsModel).where(MetricsModel.analysis_id == other_analysis_id)
@@ -262,12 +285,13 @@ async def compare_analyses(
 async def get_analysis_report(
     analysis_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """Fase 11 (seccion 23): informe en PDF del analisis -atleta, prueba,
     metricas, grafico de velocidad, y comparacion con pruebas anteriores
     del mismo atleta si las hay. 404 si el analisis no existe o todavia no
     tiene metricas (mismo criterio que /metricas)."""
+    await require_owned_analysis(session, analysis_id, user_id(current_user))
     use_case = GenerateAnalysisReport(
         analysis_repository=SqlAlchemyAnalysisRepository(session),
         video_repository=SqlAlchemyVideoRepository(session),
@@ -291,7 +315,7 @@ async def upload_and_queue_analysis(
     video: UploadFile = File(..., description="Archivo de video (MP4 o MOV)"),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> ProcessVideoResponseDTO:
     """Fase 12: endpoint combinado. Sube el video, crea el Analysis en
     PENDING y encola el procesamiento en una sola llamada. Equivale a
@@ -302,6 +326,7 @@ async def upload_and_queue_analysis(
     La sesion de BD sigue viva mientras la tarea en segundo plano
     procesa el video, exactamente igual que en create_analysis.
     """
+    await require_owned_test(session, test_id, user_id(current_user))
     settings = get_settings()
     upload_use_case = UploadVideo(
         test_repository=SqlAlchemyTestRepository(session),

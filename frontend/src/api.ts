@@ -32,12 +32,35 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
   }
 }
 
+function handleUnauthorized(response: Response, token: string | null): void {
+  if (response.status !== 401 || !token) return;
+  localStorage.removeItem("athletic-token");
+  window.dispatchEvent(new Event("athletic:session-expired"));
+}
+
+export function accessTokenExpiresAt(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))) as { exp?: number };
+    return typeof decoded.exp === "number" ? decoded.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeAccessToken(token: string): void {
+  localStorage.setItem("athletic-token", token);
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   const token = localStorage.getItem("athletic-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const response = await request(`${API_ROOT}${path}`, { ...init, headers });
+  handleUnauthorized(response, token);
   if (!response.ok) throw await apiError(response, `Error de API (${response.status})`);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -48,6 +71,7 @@ export async function apiPage<T>(path: string): Promise<{ items: T; total: numbe
   const token = localStorage.getItem("athletic-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await request(`${API_ROOT}${path}`, { headers });
+  handleUnauthorized(response, token);
   if (!response.ok) throw await apiError(response, `Error de API (${response.status})`);
   return { items: await response.json() as T, total: Number(response.headers.get("X-Total-Count") ?? 0) };
 }
@@ -57,13 +81,14 @@ export async function download(path: string, filename: string): Promise<void> {
   const token = localStorage.getItem("athletic-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await request(`${API_ROOT}${path}`, { headers });
+  handleUnauthorized(response, token);
   if (!response.ok) throw await apiError(response, "No se pudo descargar el archivo");
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function apiBlob(path: string): Promise<Blob> {
@@ -71,6 +96,7 @@ export async function apiBlob(path: string): Promise<Blob> {
   const token = localStorage.getItem("athletic-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await request(`${API_ROOT}${path}`, { headers });
+  handleUnauthorized(response, token);
   if (!response.ok) throw await apiError(response, "No se pudo cargar el recurso");
   return response.blob();
 }
@@ -87,7 +113,7 @@ export async function login(email: string, password: string): Promise<void> {
     throw new ApiError(body?.detail ?? "Correo o contraseña incorrectos", response.status);
   }
   const data = await response.json() as { access_token: string };
-  localStorage.setItem("athletic-token", data.access_token);
+  storeAccessToken(data.access_token);
 }
 
 export async function register(
@@ -95,16 +121,15 @@ export async function register(
   email: string,
   phone: string,
   password: string,
-  role: "docente" | "estudiante",
 ): Promise<void> {
   const response = await request(`${API_ROOT}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ full_name: fullName, email, phone, password, role }),
+    body: JSON.stringify({ full_name: fullName, email, phone, password, role: "docente" }),
   });
   if (!response.ok) {
     throw await apiError(response, `Error de API (${response.status})`);
   }
   const data = await response.json() as { access_token: string };
-  localStorage.setItem("athletic-token", data.access_token);
+  storeAccessToken(data.access_token);
 }

@@ -26,6 +26,7 @@ a{color:inherit;text-decoration:none}
 .help-card b{font-size:11px}
 .help-card small,.profile-mini small{font-size:10px;color:#92a0bb}
 .help-card>svg:first-child{color:#90aeff}
+button.help-card{width:100%;font:inherit;text-align:left;cursor:pointer}
 .logout{width:100%;margin-bottom:12px}
 .profile-mini{display:flex;align-items:center;gap:10px;border-top:1px solid #1e315a;padding:16px 8px 0}
 .profile-mini>span{display:grid;gap:3px;flex:1}
@@ -171,6 +172,13 @@ td.code{font-weight:700;color:#3459ad}
 .resource-art:after{content:"";position:absolute;width:125px;height:125px;border:1px solid #ffffff26;border-radius:50%}
 .resource-category{position:absolute;top:11px;left:11px;padding:5px 8px;border-radius:20px;background:#ffffffed;color:#456292;font-size:9px;font-weight:600;z-index:1}
 .resource-info{padding:14px}.resource-info h3{font-size:12px;margin:0 0 6px}.resource-info p{font-size:9px;color:#98a3b3;margin:0 0 12px}
+.resource-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.danger-action,.danger-link{color:#bd4c4c}
+.help-dialog{display:grid;gap:12px}
+.help-dialog>p{margin:0}
+.help-links{display:grid;gap:8px;margin:4px 0 8px}
+.help-links a{font-size:12px;color:#315fc0;padding:8px 10px;border-radius:7px;background:#f4f7ff}
+.help-links a:hover{background:#eaf0ff}
 .range-low{color:#d16a61}.range-mid{color:#bf8c32}.range-high{color:#23946d}
 .settings-layout{display:grid;grid-template-columns:190px 1fr;gap:15px;align-items:start}
 .settings-nav{background:#fff;border:1px solid #e9edf4;border-radius:10px;padding:8px;display:grid;gap:4px}

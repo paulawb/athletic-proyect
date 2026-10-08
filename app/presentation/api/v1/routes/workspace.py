@@ -32,10 +32,11 @@ from app.infrastructure.database.models.workspace_model import (
 )
 from app.infrastructure.database.models.user_model import UserModel
 from app.presentation.api.v1.dependencies import get_current_user
+from app.presentation.api.v1.ownership import user_id
 from app.core.security import hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1", tags=["workspace"])
-_SETTING_SECTIONS = {"profile", "institution", "privacy", "system"}
+_SETTING_SECTIONS = {"profile", "privacy", "system"}
 class SettingsSectionDTO(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
@@ -77,23 +78,35 @@ def _user_id(user: User) -> int:
 @router.get("/dashboard/stats")
 async def dashboard_stats(
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    athlete_count = await session.scalar(select(func.count()).select_from(AthleteModel)) or 0
-    test_count = await session.scalar(select(func.count()).select_from(TestModel)) or 0
+    owner_id = user_id(current_user)
+    athlete_count = await session.scalar(
+        select(func.count()).select_from(AthleteModel).where(AthleteModel.owner_user_id == owner_id)
+    ) or 0
+    owned_test_ids = (
+        select(TestModel.id)
+        .join(AthleteModel, AthleteModel.id == TestModel.athlete_id)
+        .where(AthleteModel.owner_user_id == owner_id)
+    )
+    test_count = await session.scalar(
+        select(func.count()).select_from(TestModel).where(TestModel.id.in_(owned_test_ids))
+    ) or 0
     completed_count = await session.scalar(
         select(func.count(func.distinct(TestModel.id)))
         .select_from(TestModel)
         .join(VideoModel, VideoModel.test_id == TestModel.id)
         .join(AnalysisModel, AnalysisModel.video_id == VideoModel.id)
-        .where(func.upper(AnalysisModel.status) == "COMPLETED")
+        .join(AthleteModel, AthleteModel.id == TestModel.athlete_id)
+        .where(AthleteModel.owner_user_id == owner_id, func.upper(AnalysisModel.status) == "COMPLETED")
     ) or 0
     processing_count = await session.scalar(
         select(func.count(func.distinct(TestModel.id)))
         .select_from(TestModel)
         .join(VideoModel, VideoModel.test_id == TestModel.id)
         .join(AnalysisModel, AnalysisModel.video_id == VideoModel.id)
-        .where(func.upper(AnalysisModel.status).in_(("PROCESSING", "PENDING")))
+        .join(AthleteModel, AthleteModel.id == TestModel.athlete_id)
+        .where(AthleteModel.owner_user_id == owner_id, func.upper(AnalysisModel.status).in_(("PROCESSING", "PENDING")))
     ) or 0
     rows = (
         await session.execute(
@@ -102,6 +115,7 @@ async def dashboard_stats(
             .outerjoin(VideoModel, VideoModel.test_id == TestModel.id)
             .outerjoin(AnalysisModel, AnalysisModel.video_id == VideoModel.id)
             .outerjoin(MetricsModel, MetricsModel.analysis_id == AnalysisModel.id)
+            .where(AthleteModel.owner_user_id == owner_id)
             .order_by(TestModel.created_at.desc())
             .limit(5)
         )
@@ -140,6 +154,7 @@ async def get_settings_sections(
     ).scalars()
     result = {row.section: row.data for row in rows}
     result.pop("notifications", None)
+    result.pop("institution", None)
     first, _, last = current_user.full_name.partition(" ")
     result.setdefault(
         "profile",
@@ -148,15 +163,14 @@ async def get_settings_sections(
             "last_name": last,
             "email": current_user.email,
             "phone": current_user.phone or "",
-            "position": current_user.role.capitalize(),
         },
     )
     profile_data = dict(result["profile"])
+    profile_data.pop("position", None)
     result["profile"] = {
         **profile_data,
         "email": current_user.email,
         "phone": current_user.phone or "",
-        "position": current_user.role.capitalize(),
     }
     result["privacy"] = {
         "export_format": str(result.get("privacy", {}).get("export_format", "JSON")).upper(),
@@ -215,11 +229,8 @@ async def update_settings_section(
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
         if first or last:
             user.full_name = " ".join(part for part in (first, last) if part)
-        role = str(payload.data.get("position", user.role)).strip().lower()
-        if role not in {"docente", "estudiante"}:
-            raise HTTPException(status_code=422, detail="El cargo debe ser Docente o Estudiante")
-        user.role = role
-        data["position"] = user.role.capitalize()
+        user.role = "docente"
+        data.pop("position", None)
         data["email"] = user.email
         data["phone"] = user.phone or ""
     if setting is None:
@@ -263,7 +274,9 @@ async def export_user_data(
 ) -> Response:
     athlete_rows = (
         await session.execute(
-            select(AthleteModel).order_by(AthleteModel.id)
+            select(AthleteModel)
+            .where(AthleteModel.owner_user_id == user_id(current_user))
+            .order_by(AthleteModel.id)
         )
     ).scalars().all()
     test_rows = (
@@ -272,6 +285,8 @@ async def export_user_data(
             .outerjoin(VideoModel, VideoModel.test_id == TestModel.id)
             .outerjoin(AnalysisModel, AnalysisModel.video_id == VideoModel.id)
             .outerjoin(MetricsModel, MetricsModel.analysis_id == AnalysisModel.id)
+            .join(AthleteModel, AthleteModel.id == TestModel.athlete_id)
+            .where(AthleteModel.owner_user_id == user_id(current_user))
             .order_by(TestModel.id)
         )
     ).all()
@@ -345,61 +360,6 @@ async def export_user_data(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="athletic-analysis-data.csv"'},
     )
-
-
-@router.post("/settings/institution/logo")
-async def upload_institution_logo(
-    file: UploadFile = File(...),
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(get_current_user),
-) -> dict[str, str]:
-    extension = Path(file.filename or "").suffix.lower()
-    if extension not in {".png", ".jpg", ".jpeg", ".webp"}:
-        raise HTTPException(status_code=415, detail="El logo debe ser PNG, JPG o WEBP")
-    content = await file.read(5 * 1024 * 1024 + 1)
-    if not content or len(content) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="El logo debe pesar entre 1 byte y 5 MB")
-    directory = Path(get_settings().storage_local_path) / "institucion"
-    directory.mkdir(parents=True, exist_ok=True)
-    stored = f"{uuid.uuid4().hex}{extension}"
-    (directory / stored).write_bytes(content)
-    uid = _user_id(current_user)
-    setting = await session.scalar(
-        select(SettingModel).where(SettingModel.user_id == uid, SettingModel.section == "institution")
-    )
-    data = dict(setting.data) if setting else {}
-    data["logo_filename"] = stored
-    if setting:
-        setting.data = data
-    else:
-        session.add(SettingModel(user_id=uid, section="institution", data=data))
-    await session.commit()
-    return {"logo_url": "/api/v1/settings/institution/logo", "filename": stored}
-
-
-@router.get("/settings/institution/logo")
-async def get_institution_logo(
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(get_current_user),
-) -> FileResponse:
-    setting = await session.scalar(
-        select(SettingModel).where(
-            SettingModel.user_id == _user_id(current_user), SettingModel.section == "institution"
-        )
-    )
-    filename = setting.data.get("logo_filename") if setting else None
-    if not filename:
-        raise HTTPException(status_code=404, detail="La institución aún no tiene un logo")
-    path = Path(get_settings().storage_local_path) / "institucion" / Path(filename).name
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo del logo no está disponible")
-    content_type = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-    }[path.suffix.lower()]
-    return FileResponse(path, media_type=content_type)
 
 
 @router.get("/library/resources")
@@ -555,6 +515,28 @@ async def download_library_resource(
     return FileResponse(path, media_type=resource.content_type, filename=resource.original_filename)
 
 
+@router.delete("/library/resources/{resource_id}", status_code=204)
+async def delete_library_resource(
+    resource_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> Response:
+    resource = await session.get(LibraryResourceModel, resource_id)
+    if resource is None:
+        raise HTTPException(status_code=404, detail="Recurso no encontrado")
+    path = Path(get_settings().storage_local_path) / "biblioteca" / Path(resource.stored_filename).name
+    await session.delete(resource)
+    await session.commit()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="El recurso se eliminó de la lista, pero no se pudo limpiar su archivo",
+        ) from exc
+    return Response(status_code=204)
+
+
 @router.get("/reports")
 async def list_reports(
     session: AsyncSession = Depends(get_db_session),
@@ -598,7 +580,10 @@ async def generate_report(
         .join(TestModel, TestModel.id == VideoModel.test_id)
         .join(AthleteModel, AthleteModel.id == TestModel.athlete_id)
         .join(MetricsModel, MetricsModel.analysis_id == AnalysisModel.id)
-        .where(AnalysisModel.status == "COMPLETED")
+        .where(
+            AnalysisModel.status == "COMPLETED",
+            AthleteModel.owner_user_id == user_id(current_user),
+        )
     )
     if payload.analysis_id:
         query = query.where(AnalysisModel.id == payload.analysis_id)
@@ -693,9 +678,6 @@ async def generate_report(
         content = buffer.getvalue()
     extension = payload.output_format
     stored_filename = f"{uuid.uuid4().hex}.{extension}"
-    directory = Path(get_settings().storage_local_path) / "informes"
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / stored_filename).write_bytes(content)
     report = GeneratedReportModel(
         user_id=_user_id(current_user),
         analysis_id=payload.analysis_id or rows[0][0].id,
@@ -703,6 +685,7 @@ async def generate_report(
         output_format=payload.output_format,
         stored_filename=stored_filename,
         parameters=payload.model_dump(mode="json", exclude={"name", "output_format"}),
+        file_content=content,
     )
     session.add(report)
     await session.commit()
@@ -722,13 +705,16 @@ async def download_report(
     report_id: int,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
-) -> FileResponse:
+) -> Response:
     report = await session.get(GeneratedReportModel, report_id)
     if report is None or report.user_id != _user_id(current_user):
         raise HTTPException(status_code=404, detail="Informe no encontrado")
-    path = Path(get_settings().storage_local_path) / "informes" / report.stored_filename
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo del informe no está disponible")
+    content = report.file_content
+    if content is None:
+        path = Path(get_settings().storage_local_path) / "informes" / report.stored_filename
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="El archivo del informe no está disponible")
+        content = path.read_bytes()
     report.downloads += 1
     await session.commit()
     media_types = {
@@ -737,8 +723,35 @@ async def download_report(
         "csv": "text/csv; charset=utf-8",
     }
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", report.name).strip("-") or "informe"
-    return FileResponse(
-        path,
+    return Response(
+        content=content,
         media_type=media_types[report.output_format],
-        filename=f"{safe_name}.{report.output_format}",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.{report.output_format}"'},
     )
+
+
+@router.delete("/reports/{report_id}", status_code=204)
+async def delete_report(
+    report_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    report = await session.scalar(
+        select(GeneratedReportModel).where(
+            GeneratedReportModel.id == report_id,
+            GeneratedReportModel.user_id == user_id(current_user),
+        )
+    )
+    if report is None:
+        raise HTTPException(status_code=404, detail="Informe no encontrado")
+    legacy_file = Path(get_settings().storage_local_path) / "informes" / report.stored_filename
+    await session.delete(report)
+    await session.commit()
+    try:
+        legacy_file.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="El informe se eliminó de la lista, pero no se pudo limpiar su archivo local",
+        ) from exc
+    return Response(status_code=204)

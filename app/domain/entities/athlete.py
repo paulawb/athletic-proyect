@@ -16,3 +16,4 @@ class Athlete:
     category: str | None = None
     group_name: str | None = None
     is_active: bool = True
+    owner_user_id: int | None = None

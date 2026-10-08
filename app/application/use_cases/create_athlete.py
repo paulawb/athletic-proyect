@@ -7,7 +7,7 @@ class CreateAthlete:
     def __init__(self, athlete_repository: AthleteRepository) -> None:
         self._athlete_repository = athlete_repository
 
-    async def execute(self, data: AthleteCreateDTO) -> Athlete:
+    async def execute(self, data: AthleteCreateDTO, owner_user_id: int | None = None) -> Athlete:
         athlete = Athlete(
             first_name=data.first_name,
             last_name=data.last_name,
@@ -17,5 +17,6 @@ class CreateAthlete:
             email=data.email,
             category=data.category,
             group_name=data.group_name,
+            owner_user_id=owner_user_id,
         )
         return await self._athlete_repository.create(athlete)

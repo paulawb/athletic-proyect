@@ -23,6 +23,7 @@ class SqlAlchemyAthleteRepository(AthleteRepository):
             category=athlete.category,
             group_name=athlete.group_name,
             is_active=athlete.is_active,
+            owner_user_id=athlete.owner_user_id,
         )
         self._session.add(model)
         await self._session.commit()
@@ -69,6 +70,7 @@ class SqlAlchemyAthleteRepository(AthleteRepository):
             category=model.category,
             group_name=model.group_name,
             is_active=model.is_active,
+            owner_user_id=model.owner_user_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

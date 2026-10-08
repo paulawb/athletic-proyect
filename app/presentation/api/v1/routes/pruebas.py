@@ -17,6 +17,7 @@ from app.infrastructure.database.models.video_model import VideoModel
 from app.infrastructure.database.repositories.athlete_repository_impl import SqlAlchemyAthleteRepository
 from app.infrastructure.database.repositories.test_repository_impl import SqlAlchemyTestRepository
 from app.presentation.api.v1.dependencies import get_current_user
+from app.presentation.api.v1.ownership import require_owned_athlete, user_id
 
 router = APIRouter(prefix="/api/v1/pruebas", tags=["pruebas"])
 
@@ -25,8 +26,9 @@ router = APIRouter(prefix="/api/v1/pruebas", tags=["pruebas"])
 async def create_test(
     data: TestCreateDTO,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> TestResponseDTO:
+    await require_owned_athlete(session, data.athlete_id, user_id(current_user))
     test_repository = SqlAlchemyTestRepository(session)
     athlete_repository = SqlAlchemyAthleteRepository(session)
     test = await CreateTest(test_repository, athlete_repository).execute(data)
@@ -44,8 +46,11 @@ async def list_tests(
     date_to: date | None = Query(default=None),
     response_meta: Response = None,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[TestResponseDTO]:
+    owner_filter = TestModel.athlete_id.in_(
+        select(AthleteModel.id).where(AthleteModel.owner_user_id == user_id(current_user))
+    )
     latest_analysis_id = (
         select(AnalysisModel.id)
         .join(VideoModel, VideoModel.id == AnalysisModel.video_id)
@@ -60,7 +65,7 @@ async def list_tests(
         .scalar_subquery()
         .label("analysis_status")
     )
-    conditions = []
+    conditions = [owner_filter]
     if athlete_id is not None:
         conditions.append(TestModel.athlete_id == athlete_id)
     if q:
@@ -120,25 +125,33 @@ async def list_tests(
 @router.get("/summary")
 async def get_test_summary(
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, int]:
-    total = await session.scalar(select(func.count()).select_from(TestModel)) or 0
+    owner_id = user_id(current_user)
+    owned_tests = select(TestModel.id).join(
+        AthleteModel, AthleteModel.id == TestModel.athlete_id
+    ).where(AthleteModel.owner_user_id == owner_id)
+    total = await session.scalar(select(func.count()).select_from(TestModel).where(TestModel.id.in_(owned_tests))) or 0
     start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     this_month = await session.scalar(
-        select(func.count()).select_from(TestModel).where(TestModel.created_at >= start_of_month)
+        select(func.count()).select_from(TestModel).where(
+            TestModel.id.in_(owned_tests), TestModel.created_at >= start_of_month
+        )
     ) or 0
     completed = await session.scalar(
         select(func.count(func.distinct(TestModel.id)))
         .select_from(TestModel)
         .join(VideoModel, VideoModel.test_id == TestModel.id)
         .join(AnalysisModel, AnalysisModel.video_id == VideoModel.id)
-        .where(func.upper(AnalysisModel.status) == "COMPLETED")
+        .join(AthleteModel, AthleteModel.id == TestModel.athlete_id)
+        .where(AthleteModel.owner_user_id == owner_id, func.upper(AnalysisModel.status) == "COMPLETED")
     ) or 0
     processing = await session.scalar(
         select(func.count(func.distinct(TestModel.id)))
         .select_from(TestModel)
         .join(VideoModel, VideoModel.test_id == TestModel.id)
         .join(AnalysisModel, AnalysisModel.video_id == VideoModel.id)
-        .where(func.upper(AnalysisModel.status).in_(("PENDING", "PROCESSING")))
+        .join(AthleteModel, AthleteModel.id == TestModel.athlete_id)
+        .where(AthleteModel.owner_user_id == owner_id, func.upper(AnalysisModel.status).in_(("PENDING", "PROCESSING")))
     ) or 0
     return {"total": total, "this_month": this_month, "completed": completed, "processing": processing}

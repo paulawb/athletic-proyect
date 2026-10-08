@@ -2,9 +2,8 @@
 
 Backend del trabajo de grado *"Sistema de análisis de vídeo basado en drones
 autónomos para la evaluación de variables de desempeño en carreras de
-velocidad"*. Esta es la **Fase 1**: arquitectura, FastAPI, PostgreSQL y
-autenticación JWT básica. El procesamiento de video (OpenCV, estimación de
-pose, cálculo de métricas) llega en fases posteriores.
+velocidad"*. El proyecto usa FastAPI, PostgreSQL, autenticación JWT y procesa
+video con OpenCV y MediaPipe para estimar pose y calcular métricas.
 
 ## Arquitectura
 
@@ -27,7 +26,13 @@ presentation  →  application (casos de uso)  →  domain  ←  infrastructure
   excepciones y utilidades de seguridad (hash de contraseñas, JWT) sin
   acoplamiento a un framework.
 
-## Qué incluye (Fases 1 a 11)
+Los atletas pertenecen a la cuenta que los crea; las pruebas, videos y
+análisis se consultan a través de ese propietario. Los registros anteriores
+a esta separación se conservan sin propietario y no aparecen en las cuentas.
+Los informes generados persisten en PostgreSQL; videos y archivos subidos a
+la biblioteca usan el almacenamiento local configurado para el servicio.
+
+## Qué incluye
 
 **Fase 1 — Arquitectura, FastAPI, PostgreSQL, auth**
 - Estructura completa del proyecto y las interfaces de dominio para todas
@@ -208,9 +213,17 @@ health check.
   detectar personas en el video real. `mock` solo sirve para pruebas
   visuales y genera puntos artificiales; no debe usarse para analizar
   atletas.
+- La variante `full` de Pose Landmarker es la predeterminada para priorizar
+  la detección frente a la rapidez de `lite`. MediaPipe descarta puntos con
+  confianza menor a `0.5` y poses sin una geometría coherente de torso y
+  piernas; `MEDIAPIPE_MIN_PRESENCE_CONFIDENCE` controla el umbral global
+  (por defecto `0.65`) para reducir falsos positivos.
 - El modelo (`.task`, unos MB) no se versiona: `scripts/download_pose_model.py`
   lo descarga a `MEDIAPIPE_MODEL_PATH`. `MediaPipePoseEstimator` da un
   error claro si falta, en vez de un traceback críptico de MediaPipe.
+- El proyecto usa el modelo preentrenado publicado por MediaPipe; no es un
+  modelo entrenado específicamente con los videos de esta tesis. La calidad
+  depende del encuadre, iluminación, resolución, oclusiones y perspectiva.
 - Decisión de privacidad que tomé sin preguntarte: fijé `mediapipe==0.10.21`
   en vez de una versión más reciente, porque versiones posteriores
   agregaron telemetría hacia servidores de Google. Dado que este sistema
@@ -283,28 +296,42 @@ health check.
   para los gráficos, incrustados como imagen). La sección 23 permitía
   dejar PDF para después si complicaba la primera versión; llegados a
   la Fase 11, con `Metrics` y `FrameMetrics` ya persistidos desde la
-  Fase 7, se implementa completo — un `ExcelReportGenerator` o
-  `CsvReportGenerator` (formatos que ya muestran las maquetas) podrían
-  agregarse después sin tocar el caso de uso.
+  Fase 7, se implementa completo.
 - `GenerateAnalysisReport` (nuevo caso de uso) arma los datos del informe
   cruzando `Analysis` → `Video` → `Test` → `Athlete`, y arma la
   comparación buscando, para cada prueba anterior del mismo atleta, su
   análisis completado más reciente y sus métricas — una prueba anterior
   sin video, sin análisis completado o sin métricas simplemente no aporta
   un punto de comparación (no es un error).
-- Decisión que tomé sin preguntarte, por ser consistente con lo que ya
-  habíamos decidido en la Fase 6: no agregué una tabla `Report` para
-  guardar el historial de informes generados (el "Mis reportes" de las
-  maquetas) — eso es parte de las entidades que dejamos fuera de alcance.
-  El PDF se genera al vuelo en cada request, sin persistirse.
+- Los informes PDF, Excel y CSV se generan con los registros que pertenecen
+  a la cuenta autenticada. Sus archivos quedan guardados en PostgreSQL para
+  que se puedan volver a descargar aunque Render reinicie el servicio. La
+  interfaz usa `GET /api/v1/reports`, `POST /api/v1/reports/generate` y las
+  rutas de descarga/eliminación de informes.
 - `AnalysisRepository` ganó `list_by_video_id()`, necesario para encontrar
   el análisis más reciente de una prueba anterior.
 
-**Lo que NO incluye todavía** (a propósito, según tu plan de fases):
-migración a Celery/RQ real, una forma de marcar puntos de calibración
-reales sobre una toma específica, formatos de informe adicionales
-(Excel/CSV), y las entidades de Reportes/Biblioteca/Institución de las
-maquetas (quedaron fuera del alcance).
+**Ajustes de cuentas y gestión**
+- La migración `0014` asocia atletas nuevos con la cuenta que los crea; las
+  consultas de atletas, pruebas, videos, análisis, métricas y exportaciones
+  respetan ese propietario. Los registros previos sin propietario se
+  conservan, pero no se muestran en las cuentas.
+- El registro solo admite el rol docente. Las cuentas existentes con rol
+  estudiante se convierten a docente al ejecutar la migración.
+- Los informes generados pertenecen a su cuenta y se guardan en PostgreSQL.
+  Los recursos y referencias de la Biblioteca continúan siendo compartidos
+  entre cuentas autenticadas; los archivos subidos a la Biblioteca usan
+  almacenamiento local y pueden requerir almacenamiento persistente para
+  sobrevivir reinicios de Render.
+- Se retiró la sección y las rutas de configuración institucional. La sesión
+  se cierra automáticamente al expirar el token o cuando la API responde 401.
+  Al ejecutar `0014`, también se eliminan las configuraciones institucionales
+  antiguas de la tabla `settings`.
+
+**Lo que NO incluye todavía**: migración a Celery/RQ real ni una forma de
+marcar puntos de calibración reales sobre una toma específica. Las tareas
+de video siguen ejecutándose dentro del proceso del backend y el cálculo
+de métricas sigue siendo una aproximación 2D, no una evaluación clínica.
 
 ## Cómo correrlo
 
@@ -337,7 +364,7 @@ Para usar el modelo real de pose en vez del simulado (Fase 9), descarga el
 modelo y cambia una variable de entorno:
 
 ```bash
-docker compose exec backend python -m scripts.download_pose_model lite
+docker compose exec backend python -m scripts.download_pose_model full
 # .env ya configura POSE_ESTIMATOR_BACKEND=mediapipe
 docker compose restart backend
 ```

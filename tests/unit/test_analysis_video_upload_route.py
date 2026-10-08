@@ -32,15 +32,19 @@ class FakeCreateAnalysis:
 
 
 async def test_upload_route_creates_analysis_using_persisted_video_id(monkeypatch) -> None:
+    async def require_owned_test(*_args, **_kwargs) -> None:
+        return None
+
     monkeypatch.setattr(analisis, "UploadVideo", FakeUploadVideo)
     monkeypatch.setattr(analisis, "CreateAnalysis", FakeCreateAnalysis)
+    monkeypatch.setattr(analisis, "require_owned_test", require_owned_test)
 
     response = await analisis.upload_and_queue_analysis(
         test_id=3,
         video=object(),
         background_tasks=BackgroundTasks(),
         session=object(),
-        _=User(email="docente@example.com", hashed_password="hash", full_name="Docente"),
+        current_user=User(id=1, email="docente@example.com", hashed_password="hash", full_name="Docente"),
     )
 
     assert response.video_id == 42

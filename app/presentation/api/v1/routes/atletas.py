@@ -20,6 +20,7 @@ from app.infrastructure.database.models.test_model import TestModel
 from app.infrastructure.database.models.video_model import VideoModel
 from app.infrastructure.database.repositories.athlete_repository_impl import SqlAlchemyAthleteRepository
 from app.presentation.api.v1.dependencies import get_current_user
+from app.presentation.api.v1.ownership import require_owned_athlete, user_id
 
 router = APIRouter(prefix="/api/v1/atletas", tags=["atletas"])
 
@@ -28,10 +29,10 @@ router = APIRouter(prefix="/api/v1/atletas", tags=["atletas"])
 async def create_athlete(
     data: AthleteCreateDTO,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> AthleteResponseDTO:
     repository = SqlAlchemyAthleteRepository(session)
-    athlete = await CreateAthlete(repository).execute(data)
+    athlete = await CreateAthlete(repository).execute(data, owner_user_id=user_id(current_user))
     return AthleteResponseDTO.model_validate(athlete)
 
 
@@ -44,9 +45,9 @@ async def list_athletes(
     group_name: str | None = Query(default=None, max_length=80),
     is_active: bool | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[AthleteResponseDTO]:
-    query = select(AthleteModel)
+    query = select(AthleteModel).where(AthleteModel.owner_user_id == user_id(current_user))
     if q:
         term = f"%{q.strip()}%"
         query = query.where(
@@ -89,16 +90,23 @@ async def list_athletes(
 @router.get("/groups")
 async def list_athlete_groups(
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, list[str]]:
+    owner_id = user_id(current_user)
     categories = (
         await session.execute(
-            select(AthleteModel.category).where(AthleteModel.category.is_not(None)).distinct().order_by(AthleteModel.category)
+            select(AthleteModel.category)
+            .where(AthleteModel.owner_user_id == owner_id, AthleteModel.category.is_not(None))
+            .distinct()
+            .order_by(AthleteModel.category)
         )
     ).scalars().all()
     groups = (
         await session.execute(
-            select(AthleteModel.group_name).where(AthleteModel.group_name.is_not(None)).distinct().order_by(AthleteModel.group_name)
+            select(AthleteModel.group_name)
+            .where(AthleteModel.owner_user_id == owner_id, AthleteModel.group_name.is_not(None))
+            .distinct()
+            .order_by(AthleteModel.group_name)
         )
     ).scalars().all()
     return {"categories": categories, "groups": groups}
@@ -107,10 +115,14 @@ async def list_athlete_groups(
 @router.get("/export")
 async def export_athletes(
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     athletes = (
-        await session.execute(select(AthleteModel).order_by(AthleteModel.id))
+        await session.execute(
+            select(AthleteModel)
+            .where(AthleteModel.owner_user_id == user_id(current_user))
+            .order_by(AthleteModel.id)
+        )
     ).scalars().all()
     output = io.StringIO()
     writer = csv.writer(output)
@@ -137,7 +149,7 @@ async def export_athletes(
 async def import_athletes(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, int]:
     raw = await file.read(10 * 1024 * 1024 + 1)
     if len(raw) > 10 * 1024 * 1024:
@@ -169,6 +181,7 @@ async def import_athletes(
                         gender=data.gender,
                         category=data.category,
                         group_name=data.group_name,
+                        owner_user_id=user_id(current_user),
                     )
                 )
             except (ValueError, TypeError) as exc:
@@ -193,11 +206,9 @@ async def import_athletes(
 async def athlete_metrics(
     athlete_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
-    athlete = await session.get(AthleteModel, athlete_id)
-    if athlete is None:
-        raise HTTPException(status_code=404, detail="Atleta no encontrado")
+    await require_owned_athlete(session, athlete_id, user_id(current_user))
     rows = (
         await session.execute(
             select(TestModel, MetricsModel, AnalysisModel)
@@ -239,8 +250,9 @@ async def athlete_metrics(
 async def get_athlete(
     athlete_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> AthleteResponseDTO:
+    await require_owned_athlete(session, athlete_id, user_id(current_user))
     repository = SqlAlchemyAthleteRepository(session)
     athlete = await GetAthlete(repository).execute(athlete_id)
     return AthleteResponseDTO.model_validate(athlete)
@@ -251,11 +263,9 @@ async def update_athlete(
     athlete_id: int,
     data: AthleteUpdateDTO,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> AthleteResponseDTO:
-    model = await session.get(AthleteModel, athlete_id)
-    if model is None:
-        raise HTTPException(status_code=404, detail="Atleta no encontrado")
+    model = await require_owned_athlete(session, athlete_id, user_id(current_user))
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(model, field, value)
     try:
@@ -271,10 +281,8 @@ async def update_athlete(
 async def deactivate_athlete(
     athlete_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> None:
-    model = await session.get(AthleteModel, athlete_id)
-    if model is None:
-        raise HTTPException(status_code=404, detail="Atleta no encontrado")
+    model = await require_owned_athlete(session, athlete_id, user_id(current_user))
     model.is_active = False
     await session.commit()

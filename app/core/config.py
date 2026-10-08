@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     # (modelo real). Cambiar esto no requiere tocar codigo en ningun caso de
     # uso -PoseEstimator es una interfaz de dominio; ver seccion 9.
     pose_estimator_backend: str = "mediapipe"
-    mediapipe_model_path: str = "models/pose_landmarker_lite.task"
+    mediapipe_model_path: str = "models/pose_landmarker_full.task"
     mediapipe_min_detection_confidence: float = 0.5
+    mediapipe_min_presence_confidence: float = 0.65
     mediapipe_min_tracking_confidence: float = 0.5
 
     # Fase 10: "basic" (Fase 6, heuristicas simples) o "biomechanical"

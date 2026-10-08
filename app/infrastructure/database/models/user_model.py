@@ -8,7 +8,7 @@ from app.core.database import Base
 
 class UserModel(Base):
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("role IN ('docente', 'estudiante')", name="ck_users_role"),)
+    __table_args__ = (CheckConstraint("role = 'docente'", name="ck_users_role"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)

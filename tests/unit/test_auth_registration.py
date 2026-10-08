@@ -36,17 +36,17 @@ async def test_register_creates_account_and_returns_login_token() -> None:
         email="ANA@ejemplo.com",
         phone="+57 (300) 123-4567",
         password="UnaClaveSegura2026",
-        role="estudiante",
+        role="docente",
     )
 
     response = await auth.register(data, session)
 
     assert response["email"] == "ana@ejemplo.com"
-    assert response["role"] == "estudiante"
+    assert response["role"] == "docente"
     assert session.user is not None
     assert session.user.full_name == "Ana Entrenadora"
     assert session.user.phone == "+573001234567"
-    assert session.user.role == "estudiante"
+    assert session.user.role == "docente"
     assert verify_password("UnaClaveSegura2026", session.user.hashed_password)
     assert decode_access_token(response["access_token"]) == "ana@ejemplo.com"
     assert session.commits == 1
@@ -77,6 +77,7 @@ async def test_register_rejects_duplicate_email() -> None:
         {"full_name": "Ana", "email": "ana@ejemplo.com", "phone": "3001234567", "password": "corta", "role": "docente"},
         {"full_name": "Ana", "email": "ana@ejemplo.com", "phone": "3001234567", "password": "á" * 37, "role": "docente"},
         {"full_name": "Ana", "email": "ana@ejemplo.com", "phone": "3001234567", "password": "UnaClaveSegura2026", "role": "administrador"},
+        {"full_name": "Ana", "email": "ana@ejemplo.com", "phone": "3001234567", "password": "UnaClaveSegura2026", "role": "estudiante"},
     ],
 )
 def test_registration_validates_every_account_field(payload: dict[str, str]) -> None:

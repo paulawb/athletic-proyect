@@ -1,3 +1,4 @@
+import math
 import os
 
 import mediapipe as mp
@@ -29,6 +30,66 @@ _LANDMARK_INDEX: dict[KeypointName, int] = {
     KeypointName.RIGHT_ANKLE: 28,
 }
 
+_MIN_LANDMARK_CONFIDENCE = 0.5
+_MIN_TORSO_SEPARATION = 0.025
+
+
+def _extract_valid_keypoints(landmarks, width: int, height: int) -> list[Keypoint]:
+    keypoints: list[Keypoint] = []
+    for name, index in _LANDMARK_INDEX.items():
+        landmark = landmarks[index]
+        visibility = getattr(landmark, "visibility", None)
+        presence = getattr(landmark, "presence", None)
+        confidence = visibility if visibility is not None else presence
+        x = getattr(landmark, "x", None)
+        y = getattr(landmark, "y", None)
+        if confidence is None or not math.isfinite(confidence) or confidence < _MIN_LANDMARK_CONFIDENCE:
+            continue
+        if x is None or y is None or not math.isfinite(x) or not math.isfinite(y):
+            continue
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            continue
+        keypoints.append(
+            Keypoint(
+                name=name.value,
+                x=round(x * width, 2),
+                y=round(y * height, 2),
+                confidence=round(confidence, 3),
+            )
+        )
+
+    by_name = {keypoint.name: keypoint for keypoint in keypoints}
+    shoulder_y = [
+        by_name[name.value].y
+        for name in (KeypointName.LEFT_SHOULDER, KeypointName.RIGHT_SHOULDER)
+        if name.value in by_name
+    ]
+    hip_y = [
+        by_name[name.value].y
+        for name in (KeypointName.LEFT_HIP, KeypointName.RIGHT_HIP)
+        if name.value in by_name
+    ]
+    knee_y = [
+        by_name[name.value].y
+        for name in (KeypointName.LEFT_KNEE, KeypointName.RIGHT_KNEE)
+        if name.value in by_name
+    ]
+    ankle_y = [
+        by_name[name.value].y
+        for name in (KeypointName.LEFT_ANKLE, KeypointName.RIGHT_ANKLE)
+        if name.value in by_name
+    ]
+    if not shoulder_y or not hip_y or not knee_y or not ankle_y:
+        return []
+
+    shoulder_center_y = sum(shoulder_y) / len(shoulder_y)
+    hip_center_y = sum(hip_y) / len(hip_y)
+    if hip_center_y - shoulder_center_y < height * _MIN_TORSO_SEPARATION:
+        return []
+    if max(knee_y + ankle_y) < hip_center_y + height * _MIN_TORSO_SEPARATION:
+        return []
+    return keypoints
+
 
 class MediaPipePoseEstimator(PoseEstimator):
     """Primera implementacion real de PoseEstimator (seccion 9), usando el
@@ -51,6 +112,7 @@ class MediaPipePoseEstimator(PoseEstimator):
         self,
         model_path: str,
         min_detection_confidence: float = 0.5,
+        min_presence_confidence: float = 0.65,
         min_tracking_confidence: float = 0.5,
     ) -> None:
         if not os.path.isfile(model_path):
@@ -64,6 +126,7 @@ class MediaPipePoseEstimator(PoseEstimator):
             base_options=BaseOptions(model_asset_path=model_path),
             running_mode=mp_vision.RunningMode.VIDEO,
             min_pose_detection_confidence=min_detection_confidence,
+            min_pose_presence_confidence=min_presence_confidence,
             min_tracking_confidence=min_tracking_confidence,
         )
         self._landmarker = mp_vision.PoseLandmarker.create_from_options(options)
@@ -88,16 +151,7 @@ class MediaPipePoseEstimator(PoseEstimator):
             # maneja cuadros sin ciertos keypoints (los salta, no revienta).
             return PoseEstimationResult(frame_number=frame_number, keypoints=[])
 
-        landmarks = result.pose_landmarks[0]  # una sola persona esperada: el atleta en la pista
-        keypoints = [
-            Keypoint(
-                name=name.value,
-                x=round(landmarks[index].x * width, 2),
-                y=round(landmarks[index].y * height, 2),
-                confidence=round(landmarks[index].visibility, 3),
-            )
-            for name, index in _LANDMARK_INDEX.items()
-        ]
+        keypoints = _extract_valid_keypoints(result.pose_landmarks[0], width, height)
         return PoseEstimationResult(frame_number=frame_number, keypoints=keypoints)
 
     def close(self) -> None:

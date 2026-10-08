@@ -15,8 +15,8 @@ from app.infrastructure.database.repositories.test_repository_impl import SqlAlc
 from app.infrastructure.database.repositories.video_repository_impl import SqlAlchemyVideoRepository
 from app.infrastructure.video.local_video_storage import LocalVideoStorage
 from app.infrastructure.video.opencv_frame_processor import OpenCVFrameProcessor
-from app.infrastructure.database.models.video_model import VideoModel
 from app.presentation.api.v1.dependencies import get_current_user
+from app.presentation.api.v1.ownership import require_owned_test, require_owned_video, user_id
 
 router = APIRouter(prefix="/api/v1", tags=["videos"])
 
@@ -37,8 +37,9 @@ async def upload_test_video(
     test_id: int,
     video: UploadFile = File(..., description="Archivo de video (MP4 o MOV)"),
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> VideoResponseDTO:
+    await require_owned_test(session, test_id, user_id(current_user))
     use_case = _build_upload_use_case(session)
     result = await use_case.execute(test_id, video)
     return VideoResponseDTO.model_validate(result)
@@ -48,8 +49,9 @@ async def upload_test_video(
 async def get_test_video(
     test_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> VideoResponseDTO:
+    await require_owned_test(session, test_id, user_id(current_user))
     repository = SqlAlchemyVideoRepository(session)
     video = await GetTestVideo(repository).execute(test_id)
     return VideoResponseDTO.model_validate(video)
@@ -59,8 +61,9 @@ async def get_test_video(
 async def get_video(
     video_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> VideoResponseDTO:
+    await require_owned_video(session, video_id, user_id(current_user))
     repository = SqlAlchemyVideoRepository(session)
     video = await GetVideo(repository).execute(video_id)
     return VideoResponseDTO.model_validate(video)
@@ -70,11 +73,9 @@ async def get_video(
 async def get_video_content(
     video_id: int,
     session: AsyncSession = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> FileResponse:
-    video = await session.get(VideoModel, video_id)
-    if video is None:
-        raise HTTPException(status_code=404, detail="Video no encontrado")
+    video = await require_owned_video(session, video_id, user_id(current_user))
     path = Path(LocalVideoStorage(get_settings().storage_local_path).get_absolute_path(video.storage_path))
     if not path.is_file():
         raise HTTPException(status_code=404, detail="El archivo del video no está disponible")

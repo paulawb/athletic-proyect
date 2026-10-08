@@ -4,9 +4,7 @@ from datetime import datetime
 
 @dataclass
 class User:
-    """Entidad minima para autenticacion (Fase 1). El perfil completo del
-    entrenador/institucion (mostrado en las maquetas de Configuracion) se
-    disenara cuando se aborde esa pantalla en una fase posterior."""
+    """Entidad mínima de cuenta para autenticación y propiedad de datos."""
 
     email: str
     hashed_password: str

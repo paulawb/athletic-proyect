@@ -3,10 +3,10 @@
 Uso:
     python -m scripts.download_pose_model [lite|full|heavy]
 
-Por defecto descarga "lite" (~5-9 MB, el mas liviano/rapido). "full" y
-"heavy" son mas precisos pero mas lentos -ver la guia oficial de MediaPipe
-para el tradeoff exacto. El archivo queda en la ruta de
-MEDIAPIPE_MODEL_PATH (por defecto models/pose_landmarker_lite.task).
+Por defecto descarga "full" (mayor precisión que "lite" con un costo
+moderado de cómputo). "lite" prioriza rapidez y "heavy" prioriza precisión
+con mayor costo. El archivo queda en MEDIAPIPE_MODEL_PATH (por defecto
+models/pose_landmarker_full.task).
 
 Requiere conexion a internet: descarga desde storage.googleapis.com.
 """
@@ -43,4 +43,4 @@ def main(variant: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "lite")
+    main(sys.argv[1] if len(sys.argv) > 1 else "full")
