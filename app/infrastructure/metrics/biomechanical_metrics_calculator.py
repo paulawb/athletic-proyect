@@ -1,4 +1,6 @@
 import math
+import statistics
+from dataclasses import dataclass
 
 from app.domain.services.metrics_calculator import (
     CoordinateCalibrator,
@@ -11,52 +13,75 @@ from app.domain.services.pose_estimator import Keypoint, KeypointName, PoseEstim
 _HIP_LEFT = KeypointName.LEFT_HIP
 _HIP_RIGHT = KeypointName.RIGHT_HIP
 _ANKLE_LEFT = KeypointName.LEFT_ANKLE
+_ANKLE_RIGHT = KeypointName.RIGHT_ANKLE
 _SHOULDER_LEFT = KeypointName.LEFT_SHOULDER
 _SHOULDER_RIGHT = KeypointName.RIGHT_SHOULDER
 
 _STANCE_PHASE = "apoyo"
 _FLIGHT_PHASE = "vuelo"
 
-# Referencia general de literatura de entrenamiento de velocidad para la
-# FASE DE IMPULSO (salida de tacos, seccion 1): una inclinacion de tronco
-# de ~40-50 grados desde la vertical es la que se asocia con una salida
-# potente. No es un valor clinico exacto ni reemplaza una evaluacion
-# biomecanica profesional -es una referencia razonable para dar una
-# puntuacion con sentido, en vez de un numero arbitrario.
-_IDEAL_DRIVE_PHASE_LEAN_DEG = 45.0
-_LEAN_TOLERANCE_DEG = 20.0
+_EPSILON = 1e-9
+
+# Ventana de suavizado: cada valor se calcula con un ajuste lineal por minimos
+# cuadrados de los cuadros detectados en +-0.1 s. Elimina el temblor del
+# detector sin sesgar movimientos de velocidad constante, y la pendiente del
+# ajuste es la velocidad (no una resta de dos cuadros vecinos, que amplifica
+# el ruido).
+_SMOOTHING_HALF_WINDOW_S = 0.1
+
+# Por debajo de esta velocidad el atleta se considera detenido (esperando la
+# salida o ya frenado) y esos cuadros no entran en los promedios.
+_MIN_MOVING_SPEED_MS = 0.5
+
+# Deteccion de apoyos: maximo local de la altura del tobillo en la imagen.
+_PEAK_HALF_WINDOW_S = 0.12
+_PROMINENCE_WINDOW_S = 0.3
+_MIN_PROMINENCE_LEG_FRACTION = 0.08
+_MIN_SAME_FOOT_SEPARATION_S = 0.3
+
+# Postura: inclinacion del tronco respecto a la vertical. En la salida se
+# espera ~45 grados y a medida que el atleta alcanza su velocidad maxima el
+# tronco se va erguiendo hasta ~10 grados (referencia general de la
+# literatura de entrenamiento de velocidad; no es una evaluacion clinica).
+_START_LEAN_DEG = 45.0
+_TOP_SPEED_LEAN_DEG = 10.0
+_FULL_SCORE_TOLERANCE_DEG = 5.0
+_ZERO_SCORE_DEVIATION_DEG = 25.0
+
+
+@dataclass
+class _Analysis:
+    timestamps: list[float]
+    positions: list[tuple[float, float] | None]
+    speeds: list[float | None]
+    left_strikes: list[int]
+    right_strikes: list[int]
+    postures: list[float | None]
 
 
 class BiomechanicalMetricsCalculator(MetricsCalculator):
-    """Segunda implementacion de MetricsCalculator (seccion 10, Fase 10):
-    mejora las dos formulas que en BasicMetricsCalculator (Fase 6) eran
-    heuristicas simples, sin cambiar la interfaz ni el resto del pipeline.
+    """Calcula las metricas a partir de los puntos corporales detectados.
 
-    POSTURA: en vez de solo alineacion horizontal nariz-hombros-cadera,
-    calcula el angulo real de inclinacion del tronco (vector cadera-hombro
-    contra la vertical) y lo compara con un rango ideal de la fase de
-    impulso. Este angulo se mide en PIXELES, no en el mundo real
-    calibrado: es una medida de ANGULO (invariante a escala), no de
-    distancia, y solo tiene sentido si la camara tiene un componente
-    lateral (de perfil) sobre el atleta -distinto del supuesto de vista
-    cenital que usa CoordinateCalibrator para la distancia a lo largo de
-    la pista. Ambos supuestos conviven porque miden cosas distintas con
-    puntos distintos; ninguno de los dos es una calibracion 3D real de
-    camara (eso excede el alcance de esta fase).
+    Todos los valores salen de las posiciones medidas en el video:
 
-    CADENCIA / ZANCADA: detecta apoyos mediante el cruce por cero de la
-    VELOCIDAD vertical del tobillo (positiva a negativa: deja de bajar y
-    empieza a subir), en vez de comparar 3 puntos de posicion consecutivos
-    (Fase 6). Es una tecnica estandar de deteccion de eventos de marcha a
-    partir de pose 2D, mas robusta a ruido puntual porque mira la
-    tendencia, no un pico aislado. Sigue sin ser deteccion real de
-    contacto con el suelo (eso requeriria sensores de fuerza o un modelo
-    entrenado especificamente para eso).
+    - VELOCIDAD: pendiente (m/s) del ajuste lineal de la posicion de la
+      cadera en una ventana de 0.2 s. El promedio solo considera los cuadros
+      en que el atleta se mueve; el maximo es el mayor valor suavizado.
+    - APOYOS: maximos locales de la altura de cada tobillo (el punto mas bajo
+      del ciclo), con una amplitud minima relativa al largo de la pierna del
+      propio atleta y una separacion minima entre apoyos del mismo pie.
+    - CADENCIA: pasos (apoyos de ambos pies) por segundo entre el primer y el
+      ultimo apoyo detectado.
+    - ZANCADA: distancia que recorre la cadera entre dos apoyos consecutivos
+      del mismo pie (un ciclo completo, dos pasos).
+    - POSTURA (%): que tan cerca esta la inclinacion del tronco de la
+      esperada para la velocidad del momento, promediada en los cuadros en
+      movimiento. 100 % = dentro de 5 grados de lo esperado; 0 % = 25 grados
+      o mas de diferencia.
 
-    Igual que BasicMetricsCalculator, VELOCIDAD y ZANCADA usan
-    CoordinateCalibrator.pixel_to_world() para la posicion de la cadera,
-    asi que se benefician automaticamente de una calibracion mejor
-    (ej. HomographyCoordinateCalibrator) sin que esta clase cambie.
+    La conversion de pixeles a metros la hace el CoordinateCalibrator; el
+    angulo del tronco no depende de la escala, pero requiere una camara
+    lateral (de perfil) al atleta.
     """
 
     def calculate(
@@ -68,21 +93,25 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
                 average_speed=0.0, maximum_speed=0.0, stride_length=0.0, cadence=0.0, posture_score=0.0
             )
 
-        timestamps = [r.timestamp for r in ordered]
-        hip_positions_m = [self._hip_midpoint_in_meters(r, calibrator) for r in ordered]
+        analysis = self._analyze(ordered, calibrator)
 
-        speeds = [s for s in self._instantaneous_speeds(hip_positions_m, timestamps) if s is not None]
-        average_speed = sum(speeds) / len(speeds) if speeds else 0.0
-        maximum_speed = max(speeds) if speeds else 0.0
+        valid_speeds = [s for s in analysis.speeds if s is not None]
+        moving_speeds = [s for s in valid_speeds if s >= _MIN_MOVING_SPEED_MS]
+        speeds_for_average = moving_speeds or valid_speeds
+        average_speed = sum(speeds_for_average) / len(speeds_for_average) if speeds_for_average else 0.0
+        maximum_speed = max(valid_speeds) if valid_speeds else 0.0
 
-        stride_events = self._detect_stride_events(ordered, timestamps)
-        stride_length = self._average_stride_length(hip_positions_m, stride_events)
+        cadence = self._cadence(analysis)
+        stride_length = self._stride_length(analysis)
 
-        duration = timestamps[-1] - timestamps[0]
-        cadence = (len(stride_events) / duration) if duration > 0 else 0.0
-
-        posture_scores = [s for s in (self._posture_score_for_frame(r) for r in ordered) if s is not None]
-        posture_score = sum(posture_scores) / len(posture_scores) if posture_scores else 0.0
+        moving_postures = [
+            posture
+            for posture, speed in zip(analysis.postures, analysis.speeds)
+            if posture is not None and speed is not None and speed >= _MIN_MOVING_SPEED_MS
+        ]
+        all_postures = [posture for posture in analysis.postures if posture is not None]
+        postures_for_average = moving_postures or all_postures
+        posture_score = sum(postures_for_average) / len(postures_for_average) if postures_for_average else 0.0
 
         return MetricsResult(
             average_speed=round(average_speed, 2),
@@ -99,29 +128,68 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
         if not ordered:
             return []
 
-        timestamps = [r.timestamp for r in ordered]
-        hip_positions_m = [self._hip_midpoint_in_meters(r, calibrator) for r in ordered]
-        instantaneous_speeds = self._instantaneous_speeds(hip_positions_m, timestamps)
-        stride_events = set(self._detect_stride_events(ordered, timestamps))
+        analysis = self._analyze(ordered, calibrator)
+        strikes = set(analysis.left_strikes) | set(analysis.right_strikes)
 
         values: list[FrameMetricValue] = []
         for i, result in enumerate(ordered):
-            position = hip_positions_m[i]
-            speed = instantaneous_speeds[i - 1] if i > 0 and instantaneous_speeds[i - 1] is not None else 0.0
-            posture_score = self._posture_score_for_frame(result) or 0.0
-
+            position = analysis.positions[i]
+            speed = analysis.speeds[i]
+            posture = analysis.postures[i]
             values.append(
                 FrameMetricValue(
                     frame_number=result.frame_number,
                     timestamp=result.timestamp,
                     x_position=round(position[0], 3) if position else 0.0,
                     y_position=round(position[1], 3) if position else 0.0,
-                    speed=round(speed, 3),
-                    stride_phase=_STANCE_PHASE if i in stride_events else _FLIGHT_PHASE,
-                    posture_score=round(posture_score, 2),
+                    speed=round(speed, 3) if speed is not None else 0.0,
+                    stride_phase=_STANCE_PHASE if i in strikes else _FLIGHT_PHASE,
+                    posture_score=round(posture, 2) if posture is not None else 0.0,
                 )
             )
         return values
+
+    def _analyze(self, ordered: list[PoseEstimationResult], calibrator: CoordinateCalibrator) -> _Analysis:
+        timestamps = [r.timestamp for r in ordered]
+        raw_positions = [self._hip_midpoint_in_meters(r, calibrator) for r in ordered]
+        raw_x = [p[0] if p else None for p in raw_positions]
+        raw_y = [p[1] if p else None for p in raw_positions]
+
+        positions: list[tuple[float, float] | None] = []
+        speeds: list[float | None] = []
+        for i in range(len(ordered)):
+            fit_x = _local_fit(raw_x, timestamps, i, _SMOOTHING_HALF_WINDOW_S)
+            fit_y = _local_fit(raw_y, timestamps, i, _SMOOTHING_HALF_WINDOW_S)
+            if fit_x is None or fit_y is None:
+                positions.append(None)
+                speeds.append(None)
+                continue
+            positions.append((fit_x[0], fit_y[0]))
+            speeds.append(math.hypot(fit_x[1], fit_y[1]))
+
+        valid_speeds = [s for s in speeds if s is not None]
+        top_speed = max(valid_speeds) if valid_speeds else 0.0
+
+        raw_angles = [self._trunk_lean_angle_degrees(r) for r in ordered]
+        postures: list[float | None] = []
+        for i in range(len(ordered)):
+            fit = _local_fit(raw_angles, timestamps, i, _SMOOTHING_HALF_WINDOW_S)
+            if fit is None:
+                postures.append(None)
+                continue
+            speed = speeds[i] or 0.0
+            speed_ratio = min(1.0, speed / top_speed) if top_speed > 0 else 0.0
+            ideal = _START_LEAN_DEG - (_START_LEAN_DEG - _TOP_SPEED_LEAN_DEG) * speed_ratio
+            postures.append(_posture_percentage(abs(fit[0] - ideal)))
+
+        return _Analysis(
+            timestamps=timestamps,
+            positions=positions,
+            speeds=speeds,
+            left_strikes=self._foot_strikes(ordered, timestamps, _ANKLE_LEFT),
+            right_strikes=self._foot_strikes(ordered, timestamps, _ANKLE_RIGHT),
+            postures=postures,
+        )
 
     @staticmethod
     def _keypoint(result: PoseEstimationResult, name: str) -> Keypoint | None:
@@ -134,81 +202,88 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
         right = self._keypoint(result, _HIP_RIGHT)
         if left is None or right is None:
             return None
-        x_px = (left.x + right.x) / 2
-        y_px = (left.y + right.y) / 2
         try:
-            return calibrator.pixel_to_world(x_px, y_px)
+            return calibrator.pixel_to_world((left.x + right.x) / 2, (left.y + right.y) / 2)
         except ValueError:
             return None
 
-    @staticmethod
-    def _instantaneous_speeds(
-        positions: list[tuple[float, float] | None], timestamps: list[float]
-    ) -> list[float | None]:
-        speeds: list[float | None] = []
-        for i in range(1, len(positions)):
-            previous, current = positions[i - 1], positions[i]
-            delta_time = timestamps[i] - timestamps[i - 1]
-            if previous is None or current is None or delta_time <= 0:
-                speeds.append(None)
-                continue
-            distance = math.hypot(current[0] - previous[0], current[1] - previous[1])
-            speeds.append(distance / delta_time)
-        return speeds
-
-    def _detect_stride_events(
-        self, ordered: list[PoseEstimationResult], timestamps: list[float]
+    def _foot_strikes(
+        self, ordered: list[PoseEstimationResult], timestamps: list[float], ankle_name: str
     ) -> list[int]:
-        """Cruce por cero de la velocidad vertical del tobillo: positiva
-        (bajando, y de imagen creciendo) a negativa o cero (subiendo) marca
-        el punto mas bajo del ciclo -el apoyo simulado."""
-        ankle_y = [
-            (self._keypoint(r, _ANKLE_LEFT).y if self._keypoint(r, _ANKLE_LEFT) else None) for r in ordered
-        ]
+        """Indices de los cuadros donde el tobillo esta en su punto mas bajo."""
+        ankle_y = [(kp.y if (kp := self._keypoint(r, ankle_name)) else None) for r in ordered]
+        smoothed: list[float | None] = []
+        for i in range(len(ankle_y)):
+            fit = _local_fit(ankle_y, timestamps, i, _SMOOTHING_HALF_WINDOW_S)
+            smoothed.append(fit[0] if fit else None)
 
-        velocities: list[float | None] = [None]
-        for i in range(1, len(ankle_y)):
-            delta_time = timestamps[i] - timestamps[i - 1]
-            if ankle_y[i] is None or ankle_y[i - 1] is None or delta_time <= 0:
-                velocities.append(None)
-                continue
-            velocities.append((ankle_y[i] - ankle_y[i - 1]) / delta_time)
+        leg_lengths = []
+        for result, y in zip(ordered, smoothed):
+            left_hip = self._keypoint(result, _HIP_LEFT)
+            right_hip = self._keypoint(result, _HIP_RIGHT)
+            if y is not None and left_hip and right_hip:
+                length = y - (left_hip.y + right_hip.y) / 2
+                if length > 0:
+                    leg_lengths.append(length)
+        min_prominence = _MIN_PROMINENCE_LEG_FRACTION * statistics.median(leg_lengths) if leg_lengths else 0.0
 
-        events: list[int] = []
-        for i in range(1, len(velocities) - 1):
-            entering, leaving = velocities[i], velocities[i + 1]
-            if entering is None or leaving is None:
+        candidates: list[int] = []
+        for i, y in enumerate(smoothed):
+            if y is None:
                 continue
-            if entering > 0 and leaving <= 0:
-                events.append(i)
-        return events
+            window = [
+                (j, smoothed[j])
+                for j in _indices_within(timestamps, i, _PEAK_HALF_WINDOW_S)
+                if smoothed[j] is not None
+            ]
+            if not any(j < i for j, _ in window) or not any(j > i for j, _ in window):
+                continue
+            highest = max(value for _, value in window)
+            if next(j for j, value in window if value == highest) != i:
+                continue
+            wide = [
+                smoothed[j]
+                for j in _indices_within(timestamps, i, _PROMINENCE_WINDOW_S)
+                if smoothed[j] is not None
+            ]
+            if y - min(wide) < min_prominence:
+                continue
+            candidates.append(i)
+
+        kept: list[int] = []
+        for index in candidates:
+            if kept and timestamps[index] - timestamps[kept[-1]] < _MIN_SAME_FOOT_SEPARATION_S:
+                if smoothed[index] > smoothed[kept[-1]]:
+                    kept[-1] = index
+                continue
+            kept.append(index)
+        return kept
 
     @staticmethod
-    def _average_stride_length(
-        hip_positions_m: list[tuple[float, float] | None], stride_events: list[int]
-    ) -> float:
-        if len(stride_events) < 2:
+    def _cadence(analysis: _Analysis) -> float:
+        steps = sorted(analysis.left_strikes + analysis.right_strikes)
+        if len(steps) < 2:
             return 0.0
-        distances = []
-        for start, end in zip(stride_events, stride_events[1:]):
-            position_start, position_end = hip_positions_m[start], hip_positions_m[end]
-            if position_start is None or position_end is None:
-                continue
-            distances.append(math.hypot(position_end[0] - position_start[0], position_end[1] - position_start[1]))
-        return sum(distances) / len(distances) if distances else 0.0
+        span = analysis.timestamps[steps[-1]] - analysis.timestamps[steps[0]]
+        return (len(steps) - 1) / span if span > 0 else 0.0
 
-    def _posture_score_for_frame(self, result: PoseEstimationResult) -> float | None:
-        angle = self._trunk_lean_angle_degrees(result)
-        if angle is None:
-            return None
-        deviation = abs(angle - _IDEAL_DRIVE_PHASE_LEAN_DEG)
-        return max(0.0, 100.0 - (deviation / _LEAN_TOLERANCE_DEG) * 100.0)
+    @staticmethod
+    def _stride_length(analysis: _Analysis) -> float:
+        distances: list[float] = []
+        for strikes in (analysis.left_strikes, analysis.right_strikes):
+            for start, end in zip(strikes, strikes[1:]):
+                position_start, position_end = analysis.positions[start], analysis.positions[end]
+                if position_start is None or position_end is None:
+                    continue
+                distances.append(
+                    math.hypot(position_end[0] - position_start[0], position_end[1] - position_start[1])
+                )
+        return sum(distances) / len(distances) if distances else 0.0
 
     def _trunk_lean_angle_degrees(self, result: PoseEstimationResult) -> float | None:
         """Angulo entre el vector cadera->hombro y la vertical, en grados.
-        0 grados = torso perfectamente erguido; mayor angulo = mas
-        inclinado hacia adelante. Medido en pixeles a proposito (ver
-        docstring de la clase)."""
+        0 = torso erguido; mayor angulo = mas inclinado. Se mide en pixeles
+        porque un angulo no depende de la escala."""
         left_shoulder = self._keypoint(result, _SHOULDER_LEFT)
         right_shoulder = self._keypoint(result, _SHOULDER_RIGHT)
         left_hip = self._keypoint(result, _HIP_LEFT)
@@ -216,14 +291,52 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
         if not all([left_shoulder, right_shoulder, left_hip, right_hip]):
             return None
 
-        shoulder_mid_x = (left_shoulder.x + right_shoulder.x) / 2
-        shoulder_mid_y = (left_shoulder.y + right_shoulder.y) / 2
-        hip_mid_x = (left_hip.x + right_hip.x) / 2
-        hip_mid_y = (left_hip.y + right_hip.y) / 2
-
-        dx = shoulder_mid_x - hip_mid_x
-        dy = shoulder_mid_y - hip_mid_y  # negativo si el hombro esta mas arriba (imagen: y crece hacia abajo)
+        dx = (left_shoulder.x + right_shoulder.x) / 2 - (left_hip.x + right_hip.x) / 2
+        dy = (left_shoulder.y + right_shoulder.y) / 2 - (left_hip.y + right_hip.y) / 2
         if dx == 0 and dy == 0:
             return None
-
         return math.degrees(math.atan2(abs(dx), -dy))
+
+
+def _posture_percentage(deviation_degrees: float) -> float:
+    if deviation_degrees <= _FULL_SCORE_TOLERANCE_DEG:
+        return 100.0
+    span = _ZERO_SCORE_DEVIATION_DEG - _FULL_SCORE_TOLERANCE_DEG
+    return max(0.0, 100.0 - (deviation_degrees - _FULL_SCORE_TOLERANCE_DEG) / span * 100.0)
+
+
+def _indices_within(timestamps: list[float], center: int, half_window: float) -> list[int]:
+    indices = [center]
+    j = center - 1
+    while j >= 0 and timestamps[center] - timestamps[j] <= half_window + _EPSILON:
+        indices.append(j)
+        j -= 1
+    j = center + 1
+    while j < len(timestamps) and timestamps[j] - timestamps[center] <= half_window + _EPSILON:
+        indices.append(j)
+        j += 1
+    return sorted(indices)
+
+
+def _local_fit(
+    values: list[float | None], timestamps: list[float], center: int, half_window: float
+) -> tuple[float, float] | None:
+    """Recta de minimos cuadrados de los valores detectados alrededor de
+    `center`. Devuelve (valor ajustado en el cuadro, pendiente por segundo)."""
+    if values[center] is None:
+        return None
+    origin = timestamps[center]
+    points = [
+        (timestamps[j] - origin, values[j])
+        for j in _indices_within(timestamps, center, half_window)
+        if values[j] is not None
+    ]
+    if len(points) < 2:
+        return None
+    mean_t = sum(t for t, _ in points) / len(points)
+    mean_v = sum(v for _, v in points) / len(points)
+    variance = sum((t - mean_t) ** 2 for t, _ in points)
+    if variance <= _EPSILON:
+        return mean_v, 0.0
+    slope = sum((t - mean_t) * (v - mean_v) for t, v in points) / variance
+    return mean_v - slope * mean_t, slope

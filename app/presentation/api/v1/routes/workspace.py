@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.domain.entities.user import User
 from app.core.phone import normalize_phone
+from app.core.timezone import format_local, resolve_timezone
 
 from app.infrastructure.database.models.analysis_model import AnalysisModel
 from app.infrastructure.database.models.athlete_model import AthleteModel
@@ -32,7 +33,7 @@ from app.infrastructure.database.models.workspace_model import (
 )
 from app.infrastructure.database.models.user_model import UserModel
 from app.presentation.api.v1.dependencies import get_current_user
-from app.presentation.api.v1.ownership import user_id
+from app.presentation.api.v1.ownership import get_user_timezone, user_id
 from app.core.security import hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1", tags=["workspace"])
@@ -589,16 +590,18 @@ async def generate_report(
         query = query.where(AnalysisModel.id == payload.analysis_id)
     if payload.athlete_ids:
         query = query.where(AthleteModel.id.in_(payload.athlete_ids))
+    tz_name = await get_user_timezone(session, user_id(current_user))
+    local_zone = resolve_timezone(tz_name)
     if payload.date_from:
         query = query.where(
             TestModel.created_at
-            >= datetime.combine(payload.date_from, time.min, tzinfo=timezone.utc)
+            >= datetime.combine(payload.date_from, time.min, tzinfo=local_zone)
         )
     if payload.date_to:
         query = query.where(
             TestModel.created_at
             < datetime.combine(
-                date.fromordinal(payload.date_to.toordinal() + 1), time.min, tzinfo=timezone.utc
+                date.fromordinal(payload.date_to.toordinal() + 1), time.min, tzinfo=local_zone
             )
         )
     rows = (
@@ -611,7 +614,7 @@ async def generate_report(
         "maximum_speed": "Velocidad máxima (m/s)",
         "stride_length": "Longitud de zancada (m)",
         "cadence": "Cadencia (pasos/s)",
-        "posture_score": "Postura (0-100)",
+        "posture_score": "Postura (%)",
     }
     columns = ["Análisis", "Prueba", "Atleta", "Fecha", "Distancia (m)"] + [
         labels[field] for field in payload.metrics
@@ -621,7 +624,7 @@ async def generate_report(
             analysis.id,
             test.id,
             f"{athlete.first_name} {athlete.last_name}",
-            test.created_at.strftime("%Y-%m-%d") if test.created_at else "",
+            format_local(test.created_at, tz_name),
             test.distance,
             *[getattr(metrics, field) for field in payload.metrics],
         ]

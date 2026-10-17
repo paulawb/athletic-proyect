@@ -20,7 +20,8 @@ services:
         value: /tmp/athletic-analysis/models/pose_landmarker_full.task
       - key: POSE_ESTIMATOR_BACKEND
         value: mediapipe
-      - key: MAX_VIDEO_SIZE_MB
+      - key: METRICS_CALCULATOR_BACKEND
+        value: biomechanical      - key: MAX_VIDEO_SIZE_MB
         value: "100"
       - key: CORS_ORIGINS
         value: "http://localhost:5173,http://127.0.0.1:5173,https://localhost"

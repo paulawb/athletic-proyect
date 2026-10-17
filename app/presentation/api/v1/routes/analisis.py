@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.dto.analysis_dto import (
@@ -35,9 +35,11 @@ from app.infrastructure.database.repositories.video_repository_impl import SqlAl
 from app.infrastructure.database.models.analysis_model import AnalysisModel
 from app.infrastructure.database.models.frame_metrics_model import FrameMetricsModel
 from app.infrastructure.database.models.metrics_model import MetricsModel
+from app.infrastructure.database.models.test_model import TestModel
 from app.infrastructure.database.models.video_model import VideoModel
 from app.infrastructure.metrics.basic_metrics_calculator import BasicMetricsCalculator
 from app.infrastructure.metrics.biomechanical_metrics_calculator import BiomechanicalMetricsCalculator
+from app.infrastructure.reports.glossary_report_generator import GlossaryContext, GlossaryReportGenerator
 from app.infrastructure.reports.pdf_report_generator import PdfReportGenerator
 from app.infrastructure.tasks.background_tasks_runner import BackgroundTasksRunner
 from app.infrastructure.video.local_video_storage import LocalVideoStorage
@@ -46,6 +48,7 @@ from app.infrastructure.vision.mediapipe_pose_estimator import MediaPipePoseEsti
 from app.infrastructure.vision.mock_pose_estimator import MockPoseEstimator
 from app.presentation.api.v1.dependencies import get_current_user
 from app.presentation.api.v1.ownership import (
+    get_user_timezone,
     owned_analysis_query,
     require_owned_analysis,
     require_owned_test,
@@ -281,6 +284,49 @@ async def compare_analyses(
     }
 
 
+@router.delete("/{analysis_id}", status_code=204)
+async def delete_analysis(
+    analysis_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Borra el analisis con sus metricas y datos por cuadro. Si el video
+    queda sin otros analisis se borra tambien (y su archivo), y la prueba
+    si se queda sin videos."""
+    analysis = await require_owned_analysis(session, analysis_id, user_id(current_user))
+    video = await session.get(VideoModel, analysis.video_id)
+    await session.execute(delete(FrameMetricsModel).where(FrameMetricsModel.analysis_id == analysis_id))
+    await session.execute(delete(MetricsModel).where(MetricsModel.analysis_id == analysis_id))
+    await session.delete(analysis)
+    await session.flush()
+
+    storage_path = None
+    if video is not None:
+        remaining = await session.scalar(
+            select(func.count(AnalysisModel.id)).where(AnalysisModel.video_id == video.id)
+        )
+        if not remaining:
+            storage_path = video.storage_path
+            test_id = video.test_id
+            await session.delete(video)
+            await session.flush()
+            other_videos = await session.scalar(
+                select(func.count(VideoModel.id)).where(VideoModel.test_id == test_id)
+            )
+            if not other_videos:
+                test = await session.get(TestModel, test_id)
+                if test is not None:
+                    await session.delete(test)
+    await session.commit()
+
+    if storage_path:
+        try:
+            await LocalVideoStorage(get_settings().storage_local_path).delete(storage_path)
+        except OSError:
+            pass
+    return Response(status_code=204)
+
+
 @router.get("/{analysis_id}/reporte")
 async def get_analysis_report(
     analysis_id: int,
@@ -301,11 +347,51 @@ async def get_analysis_report(
         frame_metrics_repository=SqlAlchemyFrameMetricsRepository(session),
         report_generator=PdfReportGenerator(),
     )
-    pdf_bytes = await use_case.execute(analysis_id)
+    pdf_bytes = await use_case.execute(analysis_id, await get_user_timezone(session, user_id(current_user)))
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="informe-analisis-{analysis_id}.pdf"'},
+    )
+
+
+@router.get("/{analysis_id}/glosario")
+async def get_analysis_glossary(
+    analysis_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """PDF aparte que explica cada variable del analisis y su valor."""
+    await require_owned_analysis(session, analysis_id, user_id(current_user))
+    metrics = await SqlAlchemyMetricsRepository(session).get_by_analysis_id(analysis_id)
+    if metrics is None:
+        raise HTTPException(status_code=404, detail="El análisis todavía no tiene resultados")
+    analysis = await SqlAlchemyAnalysisRepository(session).get_by_id(analysis_id)
+    video = await SqlAlchemyVideoRepository(session).get_by_id(analysis.video_id)
+    test = await SqlAlchemyTestRepository(session).get_by_id(video.test_id) if video else None
+    athlete = await SqlAlchemyAthleteRepository(session).get_by_id(test.athlete_id) if test else None
+    frames = await SqlAlchemyFrameMetricsRepository(session).list_by_analysis_id(analysis_id)
+    coverage = None
+    if frames:
+        detected = sum(1 for frame in frames if frame.keypoints)
+        coverage = f"{detected / len(frames) * 100:.1f} % ({detected} de {len(frames)} cuadros)"
+    pdf_bytes = GlossaryReportGenerator().generate(
+        GlossaryContext(
+            analysis_id=analysis_id,
+            athlete_full_name=f"{athlete.first_name} {athlete.last_name}" if athlete else "Atleta desconocido",
+            test_distance=test.distance if test else 0,
+            average_speed=metrics.average_speed,
+            maximum_speed=metrics.maximum_speed,
+            stride_length=metrics.stride_length,
+            cadence=metrics.cadence,
+            posture_score=metrics.posture_score,
+            detection_coverage=coverage,
+        )
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="glosario-analisis-{analysis_id}.pdf"'},
     )
 
 

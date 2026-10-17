@@ -30,7 +30,7 @@ _LANDMARK_INDEX: dict[KeypointName, int] = {
     KeypointName.RIGHT_ANKLE: 28,
 }
 
-_MIN_LANDMARK_CONFIDENCE = 0.5
+_MIN_LANDMARK_CONFIDENCE = 0.6
 _MIN_TORSO_SEPARATION = 0.025
 
 
@@ -111,9 +111,9 @@ class MediaPipePoseEstimator(PoseEstimator):
     def __init__(
         self,
         model_path: str,
-        min_detection_confidence: float = 0.5,
+        min_detection_confidence: float = 0.6,
         min_presence_confidence: float = 0.65,
-        min_tracking_confidence: float = 0.5,
+        min_tracking_confidence: float = 0.6,
     ) -> None:
         if not os.path.isfile(model_path):
             raise FileNotFoundError(

@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from app.domain.services.metrics_calculator import CameraCalibration
@@ -51,26 +53,89 @@ def test_calculate_computes_constant_speed_same_as_basic() -> None:
     assert result.maximum_speed == pytest.approx(2.0, abs=0.01)
 
 
-def test_calculate_detects_stride_events_via_velocity_zero_crossing() -> None:
-    calculator = BiomechanicalMetricsCalculator()
-    calibrator = _linear_calibrator(100.0)
-
-    # Mismo patron sintetico que en BasicMetricsCalculator: el metodo nuevo
-    # (cruce por cero de la velocidad vertical) coincide en este caso limpio,
-    # aunque es mas robusto a ruido puntual en casos menos ideales.
-    ankle_y_values = [80, 100, 80, 100, 80]
-    hip_x_values = [1000, 1010, 1020, 1030, 1040]
-    pose_results = [
-        _pose_result(
-            frame_number=i, hip_x=hip_x_values[i], hip_y=500, ankle_y=ankle_y_values[i], timestamp=i * 0.1
+def _running_pose_results(speed_ms: float = 3.0, steps_per_second: float = 5.0, noise: float = 0.0):
+    """Corredor sintetico a 30 fps durante 3 s: la cadera avanza a velocidad
+    constante y cada tobillo sube y baja en oposicion de fase."""
+    pixels_per_meter = 100.0
+    frequency = steps_per_second / 2
+    results = []
+    for i in range(90):
+        t = i / 30
+        hip_x = 100 + speed_ms * pixels_per_meter * t
+        jitter = noise * (-1) ** i
+        left_ankle_y = 700 + 60 * math.sin(2 * math.pi * frequency * t)
+        right_ankle_y = 700 + 60 * math.sin(2 * math.pi * frequency * t + math.pi)
+        results.append(
+            PoseEstimationResult(
+                frame_number=i,
+                timestamp=t,
+                keypoints=[
+                    Keypoint(name="left_hip", x=hip_x + jitter, y=500, confidence=0.9),
+                    Keypoint(name="right_hip", x=hip_x + jitter, y=500, confidence=0.9),
+                    Keypoint(name="left_ankle", x=hip_x, y=left_ankle_y, confidence=0.9),
+                    Keypoint(name="right_ankle", x=hip_x, y=right_ankle_y, confidence=0.9),
+                ],
+            )
         )
-        for i in range(5)
+    return results
+
+
+def test_calculate_detects_steps_of_both_feet_and_stride_length() -> None:
+    calculator = BiomechanicalMetricsCalculator()
+
+    result = calculator.calculate(_running_pose_results(), _linear_calibrator(100.0))
+
+    assert result.cadence == pytest.approx(5.0, abs=0.3)
+    # zancada = ciclo completo del mismo pie = 2 pasos a 3 m/s
+    assert result.stride_length == pytest.approx(1.2, abs=0.1)
+    assert result.average_speed == pytest.approx(3.0, abs=0.05)
+
+
+def test_speed_is_not_inflated_by_detector_jitter() -> None:
+    calculator = BiomechanicalMetricsCalculator()
+
+    result = calculator.calculate(_running_pose_results(noise=2.0), _linear_calibrator(100.0))
+
+    # +-2 px de temblor entre cuadros equivalen a ~3.6 m/s de velocidad falsa
+    # si se resta cuadro a cuadro; el ajuste por ventana debe mantenerse cerca
+    # de la velocidad real.
+    assert result.average_speed == pytest.approx(3.0, abs=0.4)
+    assert result.maximum_speed < 4.0
+
+
+def test_standing_frames_do_not_lower_average_speed() -> None:
+    calculator = BiomechanicalMetricsCalculator()
+    standing = [
+        PoseEstimationResult(
+            frame_number=i,
+            timestamp=i / 30,
+            keypoints=[
+                Keypoint(name="left_hip", x=100, y=500, confidence=0.9),
+                Keypoint(name="right_hip", x=100, y=500, confidence=0.9),
+            ],
+        )
+        for i in range(30)
+    ]
+    running = [
+        PoseEstimationResult(frame_number=r.frame_number + 30, timestamp=r.timestamp + 1.0, keypoints=r.keypoints)
+        for r in _running_pose_results()
     ]
 
-    result = calculator.calculate(pose_results, calibrator)
+    result = calculator.calculate(standing + running, _linear_calibrator(100.0))
 
-    assert result.cadence == pytest.approx(5.0, abs=0.01)
-    assert result.stride_length == pytest.approx(0.2, abs=0.01)
+    assert result.average_speed == pytest.approx(3.0, abs=0.1)
+
+
+def test_frames_without_detection_have_no_speed() -> None:
+    calculator = BiomechanicalMetricsCalculator()
+    pose_results = _running_pose_results()
+    pose_results[10] = PoseEstimationResult(frame_number=10, timestamp=10 / 30, keypoints=[])
+
+    values = calculator.calculate_frame_metrics(pose_results, _linear_calibrator(100.0))
+
+    assert values[10].speed == 0.0
+    assert values[10].posture_score == 0.0
+    assert values[11].speed == pytest.approx(3.0, abs=0.05)
 
 
 def test_posture_score_is_perfect_at_ideal_drive_phase_lean() -> None:

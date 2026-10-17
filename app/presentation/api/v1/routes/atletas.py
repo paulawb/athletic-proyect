@@ -3,6 +3,8 @@ import io
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +14,7 @@ from app.application.use_cases.create_athlete import CreateAthlete
 from app.application.use_cases.get_athlete import GetAthlete
 from app.application.use_cases.list_athletes import ListAthletes
 from app.core.database import get_db_session
+from app.core.timezone import format_local
 from app.domain.entities.user import User
 from app.infrastructure.database.models.analysis_model import AnalysisModel
 from app.infrastructure.database.models.athlete_model import AthleteModel
@@ -20,7 +23,7 @@ from app.infrastructure.database.models.test_model import TestModel
 from app.infrastructure.database.models.video_model import VideoModel
 from app.infrastructure.database.repositories.athlete_repository_impl import SqlAlchemyAthleteRepository
 from app.presentation.api.v1.dependencies import get_current_user
-from app.presentation.api.v1.ownership import require_owned_athlete, user_id
+from app.presentation.api.v1.ownership import get_user_timezone, require_owned_athlete, user_id
 
 router = APIRouter(prefix="/api/v1/atletas", tags=["atletas"])
 
@@ -142,6 +145,123 @@ async def export_athletes(
         io.BytesIO(content),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="atletas.csv"'},
+    )
+
+
+@router.get("/export/completo")
+async def export_full_report(
+    format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Descargable general: todos los atletas de la cuenta con los datos de
+    cada prueba analizada y sus metricas. Las fechas van en la zona horaria
+    elegida en Configuracion."""
+    owner_id = user_id(current_user)
+    tz_name = await get_user_timezone(session, owner_id)
+    athletes = (
+        await session.execute(
+            select(AthleteModel).where(AthleteModel.owner_user_id == owner_id).order_by(AthleteModel.id)
+        )
+    ).scalars().all()
+    rows = (
+        await session.execute(
+            select(AthleteModel.id, TestModel, VideoModel, AnalysisModel, MetricsModel)
+            .join(TestModel, TestModel.athlete_id == AthleteModel.id)
+            .outerjoin(VideoModel, VideoModel.test_id == TestModel.id)
+            .outerjoin(AnalysisModel, AnalysisModel.video_id == VideoModel.id)
+            .outerjoin(MetricsModel, MetricsModel.analysis_id == AnalysisModel.id)
+            .where(AthleteModel.owner_user_id == owner_id)
+            .order_by(AthleteModel.id, TestModel.created_at)
+        )
+    ).all()
+
+    athlete_headers = [
+        "ID", "Nombre", "Apellidos", "Documento", "Correo", "Edad", "Género", "Categoría", "Grupo", "Estado",
+        "Pruebas", "Análisis completados", "Velocidad promedio media (m/s)", "Mejor velocidad máxima (m/s)",
+    ]
+    test_headers = [
+        "ID atleta", "Atleta", "Documento", "Edad", "Género", "Categoría", "Grupo", "Código prueba", "Fecha y hora",
+        "Distancia (m)", "Tipo de prueba", "Técnica", "Video", "Análisis", "Estado",
+        "Velocidad promedio (m/s)", "Velocidad máxima (m/s)", "Longitud de zancada (m)", "Cadencia (pasos/s)",
+        "Postura (%)",
+    ]
+    by_athlete: dict[int, list] = {}
+    for athlete_id, test, video, analysis, metrics in rows:
+        by_athlete.setdefault(athlete_id, []).append((test, video, analysis, metrics))
+
+    athlete_rows: list[list] = []
+    test_rows: list[list] = []
+    for athlete in athletes:
+        entries = by_athlete.get(athlete.id, [])
+        done = [metrics for _, _, _, metrics in entries if metrics is not None]
+        athlete_rows.append(
+            [
+                athlete.id, athlete.first_name, athlete.last_name, athlete.identification, athlete.email or "",
+                athlete.age, athlete.gender, athlete.category or "", athlete.group_name or "",
+                "Activo" if athlete.is_active else "Inactivo",
+                len({test.id for test, _, _, _ in entries}), len(done),
+                round(sum(m.average_speed for m in done) / len(done), 2) if done else "",
+                round(max(m.maximum_speed for m in done), 2) if done else "",
+            ]
+        )
+        base = [
+            athlete.id, f"{athlete.first_name} {athlete.last_name}", athlete.identification, athlete.age,
+            athlete.gender, athlete.category or "", athlete.group_name or "",
+        ]
+        if not entries:
+            test_rows.append(base + [""] * (len(test_headers) - len(base)))
+        for test, video, analysis, metrics in entries:
+            test_rows.append(
+                base
+                + [
+                    f"PRU-{test.id:05d}", format_local(test.created_at, tz_name), test.distance, test.test_type,
+                    test.technique, video.original_filename if video else "", analysis.id if analysis else "",
+                    analysis.status if analysis else test.status,
+                    round(metrics.average_speed, 2) if metrics else "",
+                    round(metrics.maximum_speed, 2) if metrics else "",
+                    round(metrics.stride_length, 2) if metrics else "",
+                    round(metrics.cadence, 2) if metrics else "",
+                    round(metrics.posture_score, 1) if metrics else "",
+                ]
+            )
+
+    if format == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(test_headers)
+        writer.writerows(test_rows)
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode("utf-8-sig")),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="atletas-analizados.csv"'},
+        )
+
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = "Atletas"
+    summary.append(athlete_headers)
+    for row in athlete_rows:
+        summary.append(row)
+    detail = workbook.create_sheet("Pruebas y métricas")
+    detail.append(test_headers)
+    for row in test_rows:
+        detail.append(row)
+    for sheet in (summary, detail):
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for cell in sheet[1]:
+            cell.font = Font(bold=True)
+        for column in sheet.columns:
+            width = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column)
+            sheet.column_dimensions[column[0].column_letter].width = min(max(width + 2, 10), 40)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="atletas-analizados.xlsx"'},
     )
 
 

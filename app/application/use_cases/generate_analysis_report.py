@@ -35,7 +35,7 @@ class GenerateAnalysisReport:
         self._frame_metrics_repository = frame_metrics_repository
         self._report_generator = report_generator
 
-    async def execute(self, analysis_id: int) -> bytes:
+    async def execute(self, analysis_id: int, timezone_name: str = "America/Bogota") -> bytes:
         analysis = await self._analysis_repository.get_by_id(analysis_id)
         if analysis is None:
             raise AnalysisNotFoundError(f"No existe un analisis con id={analysis_id}")
@@ -74,6 +74,7 @@ class GenerateAnalysisReport:
             metrics=metrics,
             frame_metrics=frame_metrics,
             previous_tests=previous_tests,
+            timezone_name=timezone_name,
         )
 
         return self._report_generator.generate(report_data)

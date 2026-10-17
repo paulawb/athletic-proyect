@@ -2,7 +2,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import DEFAULT_TIMEZONE
 from app.domain.entities.user import User
+from app.infrastructure.database.models.workspace_model import SettingModel
 from app.infrastructure.database.models.analysis_model import AnalysisModel
 from app.infrastructure.database.models.athlete_model import AthleteModel
 from app.infrastructure.database.models.test_model import TestModel
@@ -13,6 +15,14 @@ def user_id(current_user: User) -> int:
     if current_user.id is None:
         raise HTTPException(status_code=401, detail="Usuario no autenticado")
     return current_user.id
+
+
+async def get_user_timezone(session: AsyncSession, owner_id: int) -> str:
+    setting = await session.scalar(
+        select(SettingModel).where(SettingModel.user_id == owner_id, SettingModel.section == "system")
+    )
+    name = (setting.data or {}).get("timezone") if setting is not None else None
+    return name or DEFAULT_TIMEZONE
 
 
 def owned_analysis_query(owner_id: int):

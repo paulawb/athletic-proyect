@@ -285,18 +285,16 @@ health check.
 
 **Fase 11 — Reportes y gráficos**
 - `GET /api/v1/analisis/{id}/reporte` (sección 23): devuelve un PDF
-  descargable con atleta, fecha, video, la tabla de métricas, un **gráfico
-  real de velocidad durante la prueba** (a partir de `FrameMetrics`) y,
-  si el atleta tiene pruebas anteriores completadas, una tabla y un
-  gráfico de **tendencia de velocidad promedio** entre pruebas. Mismo
+  descargable con atleta, fecha, video, la tabla de variables medidas y,
+  si el atleta tiene pruebas anteriores completadas, una tabla comparativa.
+  Sin gráficas. Mismo
   criterio 404 que `/metricas`: si el análisis no existe o todavía no
   tiene métricas.
 - Nuevo puerto `ReportGenerator` (dominio) + `PdfReportGenerator`
-  (infraestructura, con `reportlab` para el documento y `matplotlib`
-  para los gráficos, incrustados como imagen). La sección 23 permitía
-  dejar PDF para después si complicaba la primera versión; llegados a
-  la Fase 11, con `Metrics` y `FrameMetrics` ya persistidos desde la
-  Fase 7, se implementa completo.
+  (infraestructura, con `reportlab`). El informe solo contiene las
+  variables medidas (sin gráficas) y una tabla de comparación con pruebas
+  anteriores. Un segundo PDF, `GET /api/v1/analisis/{id}/glosario`,
+  explica qué significa y cómo se calcula cada variable.
 - `GenerateAnalysisReport` (nuevo caso de uso) arma los datos del informe
   cruzando `Analysis` → `Video` → `Test` → `Athlete`, y arma la
   comparación buscando, para cada prueba anterior del mismo atleta, su
@@ -616,7 +614,7 @@ Ver `.env.example`. Ninguna se hardcodea en el código; `Settings`
 | 8 | Análisis asíncrono (202 Accepted + polling de progreso) | `app/presentation/api/v1/routes/analisis.py`, `app/infrastructure/tasks/background_tasks_runner.py` |
 | 9 | Backends configurables de pose estimator (mock/mediapipe) | `POSE_ESTIMATOR_BACKEND` en `.env` |
 | 10 | Calibrador de homografía + métricas biomecánicas | `HomographyCoordinateCalibrator`, `BiomechanicalMetricsCalculator` |
-| 11 | Informe en PDF con reportlab + gráficos matplotlib | `app/infrastructure/reports/pdf_report_generator.py`, `GenerateAnalysisReport` |
+| 11 | Informe en PDF con reportlab (solo variables, sin gráficas) | `app/infrastructure/reports/pdf_report_generator.py`, `GenerateAnalysisReport` |
 | 12 | **Optimización y pruebas de carga** (esta fase) | Ver abajo |
 
 ## Fase 12: optimización y pruebas de carga

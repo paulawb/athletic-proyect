@@ -112,6 +112,7 @@ class ProcessVideoFrames:
 
         absolute_path = self._video_storage.get_absolute_path(video.storage_path)
         processed_frames = 0
+        last_timestamp_ms = -1
         self.pose_results = []
         self.metrics_result = None
         frame_iterator = self._frame_processor.iterate_frames(absolute_path)
@@ -139,8 +140,11 @@ class ProcessVideoFrames:
                     # MediaPipePoseEstimator) sí puede tardar lo suficiente
                     # por cuadro como para bloquear el event loop si se
                     # llamara directamente.
+                    # MediaPipe exige milisegundos estrictamente crecientes.
+                    timestamp_ms = max(round(timestamp * 1000), last_timestamp_ms + 1)
+                    last_timestamp_ms = timestamp_ms
                     pose_result = await asyncio.to_thread(
-                        self._pose_estimator.estimate, frame, frame_number, round(timestamp * 1000)
+                        self._pose_estimator.estimate, frame, frame_number, timestamp_ms
                     )
                     self.pose_results.append(dataclasses.replace(pose_result, timestamp=timestamp))
 

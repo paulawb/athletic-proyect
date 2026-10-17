@@ -79,5 +79,6 @@ async def get_video_content(
     path = Path(LocalVideoStorage(get_settings().storage_local_path).get_absolute_path(video.storage_path))
     if not path.is_file():
         raise HTTPException(status_code=404, detail="El archivo del video no está disponible")
-    content_type = "video/quicktime" if path.suffix.lower() == ".mov" else "video/mp4"
-    return FileResponse(path, media_type=content_type, filename=video.original_filename)
+    # Los .mov de celular suelen ser H.264 en contenedor QuickTime; los
+    # navegadores los reproducen mejor etiquetados como video/mp4.
+    return FileResponse(path, media_type="video/mp4", filename=video.original_filename)

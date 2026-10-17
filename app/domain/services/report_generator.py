@@ -39,6 +39,7 @@ class AnalysisReportData:
     metrics: Metrics
     frame_metrics: list[FrameMetrics] = field(default_factory=list)
     previous_tests: list[ComparisonPoint] = field(default_factory=list)
+    timezone_name: str = "America/Bogota"
 
 
 class ReportGenerator(ABC):

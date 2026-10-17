@@ -17,10 +17,10 @@ numpy==1.26.4
 # categorias de las maquetas), evitamos esas llamadas de red por defecto.
 # Si no te preocupa, podes subir de version sin problema.
 mediapipe==0.10.21
-# Informes en PDF con graficos (Fase 11)
+# Informes en PDF (Fase 11)
 reportlab==4.2.5
-matplotlib==3.9.2
 openpyxl==3.1.5
 pytest==8.3.4
 pytest-asyncio==0.25.0
 httpx==0.28.1
+tzdata==2025.2

@@ -40,12 +40,25 @@ class OpenCVFrameProcessor(FrameProcessor):
             raise ValueError(f"No se pudo abrir el video: {video_path}")
         fps = float(capture.get(cv2.CAP_PROP_FPS)) or 0.0
         frame_number = 0
+        previous_timestamp = -1.0
         try:
             while True:
                 success, frame = capture.read()
                 if not success:
                     break
-                timestamp = (frame_number / fps) if fps > 0 else 0.0
+                # Los videos de celular suelen ser de frecuencia variable: el
+                # tiempo real de cada cuadro (el que usa el navegador al
+                # reproducir) no es siempre frame_number / fps.
+                position_ms = float(capture.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
+                if frame_number == 0:
+                    timestamp = max(position_ms, 0.0) / 1000
+                elif position_ms > 0:
+                    timestamp = position_ms / 1000
+                else:
+                    timestamp = (frame_number / fps) if fps > 0 else 0.0
+                if timestamp <= previous_timestamp:
+                    timestamp = previous_timestamp + ((1 / fps) if fps > 0 else 0.001)
+                previous_timestamp = timestamp
                 yield frame_number, frame, timestamp
                 frame_number += 1
         finally:
