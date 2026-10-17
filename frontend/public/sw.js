@@ -1,4 +1,4 @@
-const CACHE_NAME = "athletic-analysis-shell-v1";
+const CACHE_NAME = "athletic-analysis-shell-v2";
 const APP_SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
