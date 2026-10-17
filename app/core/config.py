@@ -2,6 +2,7 @@ from functools import lru_cache
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class Settings(BaseSettings):
@@ -48,11 +49,18 @@ class Settings(BaseSettings):
     @field_validator("database_url", mode="before")
     @classmethod
     def use_async_postgres_driver(cls, value: str) -> str:
-        if value.startswith("postgres://"):
-            return value.replace("postgres://", "postgresql+asyncpg://", 1)
-        if value.startswith("postgresql://"):
-            return value.replace("postgresql://", "postgresql+asyncpg://", 1)
-        return value
+        url = make_url(value)
+        drivername = url.drivername
+        if drivername in {"postgres", "postgresql"}:
+            drivername = "postgresql+asyncpg"
+
+        query = dict(url.query)
+        sslmode = query.pop("sslmode", None)
+        if sslmode is not None:
+            query["ssl"] = sslmode
+        query.pop("channel_binding", None)
+
+        return url.set(drivername=drivername, query=query).render_as_string(hide_password=False)
 
     @property
     def cors_origins_list(self) -> list[str]:

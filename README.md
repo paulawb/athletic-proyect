@@ -511,7 +511,68 @@ y datos de tu PostgreSQL local no se copian automáticamente.
 
 El registro valida formato de correo y teléfono, crea la cuenta y abre la
 sesión inmediatamente. No se envían códigos SMS ni enlaces de confirmación.
-Los cargos disponibles son `Docente` y `Estudiante`.
+El único rol disponible es `Docente`.
+
+### Publicar con Neon, Render Free y Cloudflare Pages
+
+Neon reemplaza PostgreSQL, pero **no aloja la API FastAPI**. Para evitar
+activar una cuenta de facturación, esta arquitectura deja la API en el servicio
+gratuito de Render, mueve la base de datos a Neon y publica la web estática en
+Cloudflare Pages. La APK se compila como artefacto de GitHub Actions. Los
+servicios gratuitos tienen límites; esto sirve para una demostración estudiantil,
+no garantiza disponibilidad continua ni procesamiento rápido de videos.
+
+1. **Crear la base en Neon.** El proyecto gratuito `athletic-analysis` ya está
+   creado en la región AWS Oregon y tiene PostgreSQL 18. Guarda sus cadenas de
+   conexión solo en tu equipo. Para el backend usa la conexión **pooled** que
+   ofrece Neon; para importar datos usa la conexión directa. No publiques ni
+   compartas estas URLs: incluyen credenciales. El backend adapta
+   `sslmode=require` de Neon al parámetro TLS que necesita `asyncpg`.
+2. **Respaldar y copiar los datos de Render.** Antes de cambiar nada, conserva
+   la base de Render. Con las herramientas de PostgreSQL instaladas y el
+   proyecto Neon vacío, haz doble clic en `Migrar-a-Neon.bat` en la raíz del
+   repositorio:
+
+   El asistente solicita, con entrada oculta, la URL **externa** de Render y la
+   URL **directa** de Neon (no la pooled); no las pegues en GitHub, el código o
+   el chat. Crea un respaldo local, exige confirmación, se niega a importar en
+   una base Neon que ya tenga tablas y compara el número de filas de cada tabla
+   tras la copia. Conserva el respaldo y la base Render hasta comprobar el inicio
+   de sesión y los registros. La aplicación aplica las migraciones pendientes al
+   arrancar. Si Windows muestra un aviso de seguridad, elige abrir el archivo;
+   no hace falta abrir ni modificar el contenido del script.
+3. **Conectar Render con Neon.** Mantén el servicio web existente en Render y,
+   en su panel de variables de entorno, reemplaza `DATABASE_URL` por la URL
+   pooled de Neon. Conserva el mismo `JWT_SECRET_KEY` para que las sesiones no
+   se invaliden innecesariamente. No elimines la base Render hasta comprobar que
+   la API ya consulta los datos migrados en Neon. Render Free puede suspenderse
+   por inactividad; además su sistema de archivos es temporal. Por eso videos
+   originales y archivos subidos a Biblioteca pueden desaparecer al suspenderse
+   o reiniciarse la API. Los informes generados sí se guardan en PostgreSQL.
+4. **Publicar la web en Cloudflare Pages.** Conecta el repositorio GitHub como
+   proyecto Pages, establece el directorio raíz `frontend`, el comando de
+   compilación `npm run build` y el directorio de salida `dist`. Configura la
+   variable de compilación `VITE_API_URL` con el origen HTTPS de Render, por
+   ejemplo `https://tu-servicio.onrender.com` (sin `/api/v1` ni barra final).
+   Cloudflare asignará un dominio `*.pages.dev`; anótalo.
+5. **Configurar CORS.** En las variables del servicio Render establece
+   `CORS_ORIGINS` como una lista separada por comas con el dominio Pages exacto
+   y `https://localhost` para Android, por ejemplo
+   `https://tu-proyecto.pages.dev,https://localhost`. Si también usarás la web
+   local, agrega `http://localhost:5173,http://127.0.0.1:5173`. Guarda los
+   cambios y espera a que Render vuelva a desplegar el servicio.
+6. **Generar la APK gratuita de prueba.** Publica los cambios de código en
+   GitHub, abre **Actions → Crear APK Android → Run workflow**, e introduce el
+   origen HTTPS de Render. Descarga el artefacto `athletic-analysis-android-apk`
+   cuando termine; queda disponible durante 7 días. Este APK de depuración se
+   instala manualmente en Android y no es una publicación de Play Store.
+
+Neon y Cloudflare Pages tienen cuotas gratuitas sujetas a sus términos y
+límites vigentes. Render Free puede dormir y no ofrece disco persistente. En
+consecuencia, si la API se suspende durante un análisis, el proceso puede
+interrumpirse; conserva los videos originales fuera de la aplicación. La cuota
+gratuita de Neon tampoco equivale a una copia de seguridad: conserva el archivo
+de respaldo exportado y verifica el contenido tras la migración.
 
 La API agrega `GET /api/v1/dashboard/stats`, reportes en
 `/api/v1/reports`, recursos en `/api/v1/library/resources` y preferencias en
