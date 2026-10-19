@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -84,9 +85,12 @@ async def test_create_test_keeps_the_requested_test_date() -> None:
     athlete_repository = FakeAthleteRepository([_existing_athlete()])
     test_repository = FakeTestRepository()
 
-    test = await CreateTest(test_repository, athlete_repository).execute(_create_dto(test_date=date(2025, 4, 12)))
+    test = await CreateTest(test_repository, athlete_repository).execute(
+        _create_dto(test_date=date(2025, 4, 12)), "America/Bogota"
+    )
 
-    assert test.created_at == datetime(2025, 4, 12, tzinfo=timezone.utc)
+    assert test.created_at.tzinfo is not None
+    assert test.created_at.astimezone(ZoneInfo("America/Bogota")).date() == date(2025, 4, 12)
 
 
 async def test_create_test_raises_when_athlete_does_not_exist() -> None:

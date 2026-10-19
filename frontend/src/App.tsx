@@ -207,7 +207,7 @@ function ReportsPage() {
     <PageTitle eyebrow="INFORMES ANALÍTICOS" title="Reportes" subtitle="Genera informes con filtros, plantillas y métricas seleccionadas."/>
     <div className="stat-grid three">
       <StatCard label="Reportes generados" value={reports.length} icon={<FileBarChart/>} color="blue"/>
-      <StatCard label="Este mes" value={reports.filter(r=>r.created_at?.slice(0,7)===new Date().toISOString().slice(0,7)).length} icon={<Clock3/>} color="violet"/>
+      <StatCard label="Este mes" value={reports.filter(r=>r.created_at?.slice(0,7)===todayInZone().slice(0,7)).length} icon={<Clock3/>} color="violet"/>
       <StatCard label="Descargas totales" value={downloads} icon={<ArrowDownToLine/>} color="green"/>
     </div>
     <div className="two-column">

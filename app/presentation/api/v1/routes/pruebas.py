@@ -8,6 +8,7 @@ from app.application.dto.test_dto import TestCreateDTO, TestResponseDTO
 from app.application.use_cases.create_test import CreateTest
 from app.application.use_cases.list_tests import ListTests
 from app.core.database import get_db_session
+from app.core.timezone import resolve_timezone
 from app.domain.entities.user import User
 from app.infrastructure.database.models.analysis_model import AnalysisModel
 from app.infrastructure.database.models.athlete_model import AthleteModel
@@ -17,7 +18,7 @@ from app.infrastructure.database.models.video_model import VideoModel
 from app.infrastructure.database.repositories.athlete_repository_impl import SqlAlchemyAthleteRepository
 from app.infrastructure.database.repositories.test_repository_impl import SqlAlchemyTestRepository
 from app.presentation.api.v1.dependencies import get_current_user
-from app.presentation.api.v1.ownership import require_owned_athlete, user_id
+from app.presentation.api.v1.ownership import get_user_timezone, require_owned_athlete, user_id
 
 router = APIRouter(prefix="/api/v1/pruebas", tags=["pruebas"])
 
@@ -31,7 +32,8 @@ async def create_test(
     await require_owned_athlete(session, data.athlete_id, user_id(current_user))
     test_repository = SqlAlchemyTestRepository(session)
     athlete_repository = SqlAlchemyAthleteRepository(session)
-    test = await CreateTest(test_repository, athlete_repository).execute(data)
+    tz_name = await get_user_timezone(session, user_id(current_user))
+    test = await CreateTest(test_repository, athlete_repository).execute(data, tz_name)
     return TestResponseDTO.model_validate(test)
 
 
@@ -81,14 +83,13 @@ async def list_tests(
         )
     if status:
         conditions.append(func.upper(func.coalesce(latest_status, TestModel.status)) == status.upper())
+    zone = resolve_timezone(await get_user_timezone(session, user_id(current_user)))
     if date_from:
-        conditions.append(
-            TestModel.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc)
-        )
+        conditions.append(TestModel.created_at >= datetime.combine(date_from, time.min, tzinfo=zone))
     if date_to:
         conditions.append(
             TestModel.created_at < datetime.combine(
-                date.fromordinal(date_to.toordinal() + 1), time.min, tzinfo=timezone.utc
+                date.fromordinal(date_to.toordinal() + 1), time.min, tzinfo=zone
             )
         )
 
@@ -132,7 +133,8 @@ async def get_test_summary(
         AthleteModel, AthleteModel.id == TestModel.athlete_id
     ).where(AthleteModel.owner_user_id == owner_id)
     total = await session.scalar(select(func.count()).select_from(TestModel).where(TestModel.id.in_(owned_tests))) or 0
-    start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    zone = resolve_timezone(await get_user_timezone(session, owner_id))
+    start_of_month = datetime.now(zone).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     this_month = await session.scalar(
         select(func.count()).select_from(TestModel).where(
             TestModel.id.in_(owned_tests), TestModel.created_at >= start_of_month
