@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -6,15 +7,31 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
+from app.core.database import AsyncSessionLocal
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import configure_logging
+from app.infrastructure.database.stale_analyses import fail_stale_analyses
 from app.presentation.api.v1.routes import analisis, atletas, auth, health, pruebas, videos, workspace
 
 settings = get_settings()
 
 configure_logging()
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Las tareas en segundo plano no sobreviven a un reinicio: lo que siguiera
+    # en proceso ya no lo esta ejecutando nadie.
+    try:
+        async with AsyncSessionLocal() as session:
+            await fail_stale_analyses(session, max_idle_minutes=0)
+    except Exception:
+        pass
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Athletic Analysis API",
     description=(
         "Sistema de analisis de video basado en drones autonomos para la "

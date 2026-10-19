@@ -177,7 +177,16 @@ class ProcessVideoFrames:
                 ),
             )
 
-        await self._calculate_and_persist_metrics(video, analysis_id)
+        try:
+            await self._calculate_and_persist_metrics(video, analysis_id)
+        except Exception as exc:
+            logger.exception("Fallo el calculo de metricas del analisis id=%s", analysis_id)
+            return await self._analysis_repository.update_progress(
+                analysis_id,
+                AnalysisStatus.FAILED,
+                processed_frames,
+                error_message=f"No se pudieron calcular las métricas: {exc}",
+            )
 
         return await self._analysis_repository.update_progress(
             analysis_id, AnalysisStatus.COMPLETED, processed_frames

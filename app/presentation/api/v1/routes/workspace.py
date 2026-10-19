@@ -21,6 +21,7 @@ from app.core.phone import normalize_phone
 from app.core.timezone import format_local, resolve_timezone
 
 from app.infrastructure.database.models.analysis_model import AnalysisModel
+from app.infrastructure.database.stale_analyses import fail_stale_analyses
 from app.infrastructure.database.models.athlete_model import AthleteModel
 from app.infrastructure.database.models.metrics_model import MetricsModel
 from app.infrastructure.database.models.test_model import TestModel
@@ -82,6 +83,7 @@ async def dashboard_stats(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     owner_id = user_id(current_user)
+    await fail_stale_analyses(session)
     athlete_count = await session.scalar(
         select(func.count()).select_from(AthleteModel).where(AthleteModel.owner_user_id == owner_id)
     ) or 0

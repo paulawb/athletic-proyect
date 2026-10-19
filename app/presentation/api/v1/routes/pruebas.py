@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timezone
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.dto.test_dto import TestCreateDTO, TestResponseDTO
@@ -9,6 +9,10 @@ from app.application.use_cases.create_test import CreateTest
 from app.application.use_cases.list_tests import ListTests
 from app.core.database import get_db_session
 from app.core.timezone import resolve_timezone
+from app.infrastructure.database.models.frame_metrics_model import FrameMetricsModel
+from app.infrastructure.database.stale_analyses import fail_stale_analyses
+from app.infrastructure.video.local_video_storage import LocalVideoStorage
+from app.core.config import get_settings
 from app.domain.entities.user import User
 from app.infrastructure.database.models.analysis_model import AnalysisModel
 from app.infrastructure.database.models.athlete_model import AthleteModel
@@ -18,7 +22,7 @@ from app.infrastructure.database.models.video_model import VideoModel
 from app.infrastructure.database.repositories.athlete_repository_impl import SqlAlchemyAthleteRepository
 from app.infrastructure.database.repositories.test_repository_impl import SqlAlchemyTestRepository
 from app.presentation.api.v1.dependencies import get_current_user
-from app.presentation.api.v1.ownership import get_user_timezone, require_owned_athlete, user_id
+from app.presentation.api.v1.ownership import get_user_timezone, require_owned_athlete, require_owned_test, user_id
 
 router = APIRouter(prefix="/api/v1/pruebas", tags=["pruebas"])
 
@@ -50,6 +54,7 @@ async def list_tests(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> list[TestResponseDTO]:
+    await fail_stale_analyses(session)
     owner_filter = TestModel.athlete_id.in_(
         select(AthleteModel.id).where(AthleteModel.owner_user_id == user_id(current_user))
     )
@@ -123,11 +128,40 @@ async def list_tests(
     return response
 
 
+@router.delete("/{test_id}", status_code=204)
+async def delete_test(
+    test_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Borra la prueba con sus videos, analisis, metricas y archivos."""
+    test = await require_owned_test(session, test_id, user_id(current_user))
+    videos = (await session.execute(select(VideoModel).where(VideoModel.test_id == test.id))).scalars().all()
+    video_ids = [video.id for video in videos]
+    storage_paths = [video.storage_path for video in videos]
+    if video_ids:
+        analysis_ids = select(AnalysisModel.id).where(AnalysisModel.video_id.in_(video_ids))
+        await session.execute(delete(FrameMetricsModel).where(FrameMetricsModel.analysis_id.in_(analysis_ids)))
+        await session.execute(delete(MetricsModel).where(MetricsModel.analysis_id.in_(analysis_ids)))
+        await session.execute(delete(AnalysisModel).where(AnalysisModel.video_id.in_(video_ids)))
+        await session.execute(delete(VideoModel).where(VideoModel.id.in_(video_ids)))
+    await session.delete(test)
+    await session.commit()
+    storage = LocalVideoStorage(get_settings().storage_local_path)
+    for path in storage_paths:
+        try:
+            await storage.delete(path)
+        except OSError:
+            pass
+    return Response(status_code=204)
+
+
 @router.get("/summary")
 async def get_test_summary(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, int]:
+    await fail_stale_analyses(session)
     owner_id = user_id(current_user)
     owned_tests = select(TestModel.id).join(
         AthleteModel, AthleteModel.id == TestModel.athlete_id

@@ -42,6 +42,7 @@ from app.infrastructure.metrics.biomechanical_metrics_calculator import Biomecha
 from app.infrastructure.reports.glossary_report_generator import GlossaryContext, GlossaryReportGenerator
 from app.infrastructure.reports.pdf_report_generator import PdfReportGenerator
 from app.infrastructure.tasks.background_tasks_runner import BackgroundTasksRunner
+from app.infrastructure.database.stale_analyses import fail_stale_analyses
 from app.infrastructure.video.local_video_storage import LocalVideoStorage
 from app.infrastructure.video.opencv_frame_processor import OpenCVFrameProcessor
 from app.infrastructure.vision.mediapipe_pose_estimator import MediaPipePoseEstimator
@@ -169,6 +170,7 @@ async def list_analyses(
     current_user: User = Depends(get_current_user),
 ) -> list[AnalysisResponseDTO]:
     repository = SqlAlchemyAnalysisRepository(session)
+    await fail_stale_analyses(session)
     analysis_models = (
         await session.execute(
             owned_analysis_query(user_id(current_user))
@@ -195,6 +197,7 @@ async def get_analysis(
     para ver como avanza processed_frames/progress_percentage hasta que
     status pase a COMPLETED o FAILED."""
     await require_owned_analysis(session, analysis_id, user_id(current_user))
+    await fail_stale_analyses(session)
     repository = SqlAlchemyAnalysisRepository(session)
     analysis = await GetAnalysis(repository).execute(analysis_id)
     return AnalysisResponseDTO.model_validate(analysis)

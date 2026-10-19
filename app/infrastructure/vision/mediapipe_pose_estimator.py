@@ -1,6 +1,7 @@
 import math
 import os
 
+import cv2
 import mediapipe as mp
 import numpy as np
 from mediapipe.tasks.python import vision as mp_vision
@@ -31,6 +32,7 @@ _LANDMARK_INDEX: dict[KeypointName, int] = {
 }
 
 _MIN_LANDMARK_CONFIDENCE = 0.6
+_MAX_DETECTION_SIDE = 960
 _MIN_TORSO_SEPARATION = 0.025
 
 
@@ -135,8 +137,18 @@ class MediaPipePoseEstimator(PoseEstimator):
         self, frame: np.ndarray, frame_number: int, timestamp_ms: int | None = None
     ) -> PoseEstimationResult:
         height, width = int(frame.shape[0]), int(frame.shape[1])
+        # Los videos de celular (1080p/4K) son lentos y pesados en memoria; el
+        # modelo trabaja bien con 960 px de lado mayor. Los puntos salen
+        # normalizados, asi que se siguen expresando en la resolucion original.
+        detect_frame = frame
+        longest = max(height, width)
+        if longest > _MAX_DETECTION_SIDE:
+            scale = _MAX_DETECTION_SIDE / longest
+            detect_frame = cv2.resize(
+                frame, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA
+            )
         # OpenCV entrega los cuadros en BGR; MediaPipe espera RGB (seccion 8).
-        rgb_frame = np.ascontiguousarray(frame[:, :, ::-1])
+        rgb_frame = np.ascontiguousarray(detect_frame[:, :, ::-1])
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
         # VIDEO requiere timestamps en milisegundos, no indices de cuadro.
