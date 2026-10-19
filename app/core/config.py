@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 60
+    jwt_access_token_expire_minutes: int = 60 * 24 * 90
 
     max_video_size_mb: int = 500
 

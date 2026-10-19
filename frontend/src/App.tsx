@@ -29,25 +29,8 @@ const navItems = [
   { to: "/configuracion", label: "Configuración", icon: SettingsIcon },
 ];
 
-const IDLE_LIMIT_MS = 10 * 60 * 1000;
-const LAST_SEEN_KEY = "athletic-last-seen";
-
-function awayTooLong(): boolean {
-  const last = Number(localStorage.getItem(LAST_SEEN_KEY));
-  return Boolean(last) && Date.now() - last > IDLE_LIMIT_MS;
-}
-
-function hasValidSession(): boolean {
-  if (!localStorage.getItem("athletic-token")) return false;
-  if (awayTooLong()) {
-    localStorage.removeItem("athletic-token");
-    return false;
-  }
-  return true;
-}
-
 function App() {
-  const [authorized, setAuthorized] = useState(hasValidSession);
+  const [authorized, setAuthorized] = useState(Boolean(localStorage.getItem("athletic-token")));
   const [currentUser,setCurrentUser]=useState<CurrentUser|null>(null);const [profileError,setProfileError]=useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
   const [zoneKey,setZoneKey]=useState("");
@@ -64,33 +47,7 @@ function App() {
     window.addEventListener("athletic:session-expired", logout);
     return () => window.removeEventListener("athletic:session-expired", logout);
   }, [logout]);
-  useEffect(() => {
-    if (!authorized) {
-      localStorage.removeItem(LAST_SEEN_KEY);
-      return;
-    }
-    const touch = () => localStorage.setItem(LAST_SEEN_KEY, String(Date.now()));
-    const onVisible = () => {
-      if (document.visibilityState === "hidden") {
-        touch();
-      } else if (awayTooLong()) {
-        logout();
-      } else {
-        touch();
-      }
-    };
-    touch();
-    const heartbeat = window.setInterval(() => {
-      if (document.visibilityState === "visible") touch();
-    }, 30_000);
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("pagehide", touch);
-    return () => {
-      window.clearInterval(heartbeat);
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("pagehide", touch);
-    };
-  }, [authorized, logout]);
+
   useEffect(() => {
     if (!authorized) return;
     const token = localStorage.getItem("athletic-token");
