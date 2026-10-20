@@ -45,12 +45,23 @@ function App() {
   }, []);
   useEffect(() => {
     window.addEventListener("athletic:session-expired", logout);
-    return () => window.removeEventListener("athletic:session-expired", logout);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "athletic-token" && event.newValue === null) logout();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("athletic:session-expired", logout);
+      window.removeEventListener("storage", onStorage);
+    };
   }, [logout]);
 
   useEffect(() => {
     if (!authorized) return;
     const token = localStorage.getItem("athletic-token");
+    if (!token) {
+      logout();
+      return;
+    }
     const expiresAt = token ? accessTokenExpiresAt(token) : null;
     if (expiresAt === null) {
       logout();

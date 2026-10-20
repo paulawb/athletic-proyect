@@ -32,8 +32,8 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
   }
 }
 
-function handleUnauthorized(response: Response, token: string | null): void {
-  if (response.status !== 401 || !token) return;
+function handleUnauthorized(response: Response): void {
+  if (response.status !== 401) return;
   localStorage.removeItem("athletic-token");
   window.dispatchEvent(new Event("athletic:session-expired"));
 }
@@ -60,7 +60,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const response = await request(`${API_ROOT}${path}`, { ...init, headers });
-  handleUnauthorized(response, token);
+  handleUnauthorized(response);
   if (!response.ok) throw await apiError(response, `Error de API (${response.status})`);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -71,7 +71,7 @@ export async function apiPage<T>(path: string): Promise<{ items: T; total: numbe
   const token = localStorage.getItem("athletic-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await request(`${API_ROOT}${path}`, { headers });
-  handleUnauthorized(response, token);
+  handleUnauthorized(response);
   if (!response.ok) throw await apiError(response, `Error de API (${response.status})`);
   return { items: await response.json() as T, total: Number(response.headers.get("X-Total-Count") ?? 0) };
 }
@@ -81,7 +81,7 @@ export async function download(path: string, filename: string): Promise<void> {
   const token = localStorage.getItem("athletic-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await request(`${API_ROOT}${path}`, { headers });
-  handleUnauthorized(response, token);
+  handleUnauthorized(response);
   if (!response.ok) throw await apiError(response, "No se pudo descargar el archivo");
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
@@ -96,7 +96,7 @@ export async function apiBlob(path: string): Promise<Blob> {
   const token = localStorage.getItem("athletic-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await request(`${API_ROOT}${path}`, { headers });
-  handleUnauthorized(response, token);
+  handleUnauthorized(response);
   if (!response.ok) throw await apiError(response, "No se pudo cargar el recurso");
   return response.blob();
 }
