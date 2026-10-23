@@ -86,8 +86,8 @@ def test_calculate_detects_steps_of_both_feet_and_stride_length() -> None:
     result = calculator.calculate(_running_pose_results(), _linear_calibrator(100.0))
 
     assert result.cadence == pytest.approx(5.0, abs=0.3)
-    # zancada = ciclo completo del mismo pie = 2 pasos a 3 m/s
-    assert result.stride_length == pytest.approx(1.2, abs=0.1)
+    # longitud de paso = 3 m/s / 5 pasos/s
+    assert result.stride_length == pytest.approx(0.6, abs=0.05)
     assert result.average_speed == pytest.approx(3.0, abs=0.05)
 
 

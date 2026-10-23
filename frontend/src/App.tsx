@@ -5,7 +5,7 @@ import {
   ClipboardList, Clock3, FileBarChart, FileText, Gauge, LogOut, Menu, Plus, Search, Settings as SettingsIcon,
   ShieldCheck, Trash2, Users, Video, X,
 } from "lucide-react";
-import { accessTokenExpiresAt, api, apiBlob, apiPage, ApiError, download, login, register } from "./api";
+import { api, apiBlob, apiPage, ApiError, download, login, register } from "./api";
 
 type Athlete = { id: number; first_name: string; last_name: string; identification: string; age: number; gender: string; email?: string|null; category?: string|null; group_name?: string|null; is_active:boolean; test_count?:number };
 type Test = { id: number; athlete_id: number; distance: number; test_type: string; technique: string; status: string; analysis_status?:string|null; average_speed?:number|null; maximum_speed?:number|null; stride_length?:number|null; cadence?:number|null; posture_score?:number|null; created_at?: string };
@@ -55,39 +55,7 @@ function App() {
     };
   }, [logout]);
 
-  useEffect(() => {
-    if (!authorized) return;
-    const token = localStorage.getItem("athletic-token");
-    if (!token) {
-      logout();
-      return;
-    }
-    const expiresAt = token ? accessTokenExpiresAt(token) : null;
-    if (expiresAt === null) {
-      logout();
-      return;
-    }
-    let timer = 0;
-    const checkExpiration = () => {
-      window.clearTimeout(timer);
-      const remaining = expiresAt - Date.now();
-      if (remaining <= 0) {
-        logout();
-        return;
-      }
-      timer = window.setTimeout(checkExpiration, Math.min(remaining, 2_147_000_000));
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") checkExpiration();
-    };
-    checkExpiration();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [authorized, logout]);
-  useEffect(()=>{if(!authorized){setCurrentUser(null);return;}let mounted=true;api<Record<string,Record<string,string>>>("/settings").then(data=>{if(mounted){setAppTimeZone(data.system?.timezone);setZoneKey(appTimeZone);}}).catch(()=>undefined);api<CurrentUser>("/auth/me").then(user=>{if(mounted){setCurrentUser(user);setProfileError("");}}).catch(error=>{if(mounted)setProfileError(message(error));});return()=>{mounted=false;};},[authorized]);
+  useEffect(()=>{if(!authorized){setCurrentUser(null);return;}let mounted=true;api<Record<string,Record<string,string>>>("/settings").then(data=>{if(mounted){setAppTimeZone(data.system?.timezone);setZoneKey(appTimeZone);}}).catch(()=>undefined);const loadProfile=(attempt:number)=>{api<CurrentUser>("/auth/me").then(user=>{if(mounted){setCurrentUser(user);setProfileError("");}}).catch(error=>{if(!mounted)return;if(attempt<4&&!(error instanceof ApiError&&error.status===401)){retryTimer=window.setTimeout(()=>loadProfile(attempt+1),2000*(attempt+1));return;}setProfileError(message(error));});};let retryTimer=0;loadProfile(0);return()=>{mounted=false;window.clearTimeout(retryTimer);};},[authorized]);
 
   if (!authorized) return <Login onLogin={() => { setAuthorized(true); navigate("/"); }} />;
   return <div className="app-shell">
@@ -95,11 +63,11 @@ function App() {
       <div className="brand"><span className="brand-mark"><Activity size={19} /></span><span>ATHLETIC<br /><b>ANALYSIS</b></span></div>
       <div className="nav-caption">MENÚ PRINCIPAL</div>
       <nav>{navItems.map(({to,label,icon:Icon}) => <NavLink key={to} to={to} end={to === "/"} onClick={() => setMobileMenu(false)} className={({isActive}) => `nav-link ${isActive ? "active" : ""}`}><Icon size={18} /><span>{label}</span>{label === "Análisis" && <span className="nav-dot" />}</NavLink>)}</nav>
-      <div className="sidebar-bottom"><button type="button" className="help-card" onClick={()=>setHelpOpen(true)}><CircleHelp size={18}/><span><b>¿Necesitas ayuda?</b><small>Consulta la guía de uso</small></span><ArrowRight size={15}/></button><button className="nav-link logout" onClick={logout}><LogOut size={18}/><span>Cerrar sesión</span></button><div className="profile-mini"><div className="avatar">{currentUser?initialsFromName(currentUser.full_name):"…"}</div><span><b>{currentUser?.full_name??"Cargando perfil…"}</b><small>{currentUser?roleLabel(currentUser.role):" "}</small></span></div></div>
+      <div className="sidebar-bottom"><button type="button" className="help-card" onClick={()=>setHelpOpen(true)}><CircleHelp size={18}/><span><b>¿Necesitas ayuda?</b><small>Consulta la guía de uso</small></span><ArrowRight size={15}/></button><button className="nav-link logout" onClick={logout}><LogOut size={18}/><span>Cerrar sesión</span></button><div className="profile-mini"><div className="avatar">{currentUser?initialsFromName(currentUser.full_name):"U"}</div><span><b>{currentUser?.full_name??"Cargando perfil…"}</b><small>{currentUser?roleLabel(currentUser.role):" "}</small></span></div></div>
     </aside>
     {mobileMenu && <button className="scrim" aria-label="Cerrar menú" onClick={() => setMobileMenu(false)} />}
     <main className="main-area">
-      <header className="topbar"><button className="icon-button mobile-toggle" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Abrir menú"><Menu size={20}/></button><div className="breadcrumbs">Inicio <span>/</span> <b>{active?.label ?? "Detalle"}</b></div><div className="top-actions"><span className="live-dot"/> Sistema operativo <span>{currentUser?roleLabel(currentUser.role):""}</span><div className="avatar avatar-small">{currentUser?initialsFromName(currentUser.full_name):"…"}</div></div></header>
+      <header className="topbar"><button className="icon-button mobile-toggle" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Abrir menú"><Menu size={20}/></button><div className="breadcrumbs">Inicio <span>/</span> <b>{active?.label ?? "Detalle"}</b></div><div className="top-actions"><span className="live-dot"/> Sistema operativo <span>{currentUser?roleLabel(currentUser.role):""}</span><div className="avatar avatar-small">{currentUser?initialsFromName(currentUser.full_name):"U"}</div></div></header>
       <div className="page-wrap" key={zoneKey}>{profileError&&<ErrorBanner text={profileError}/>}<Routes>
         <Route path="/" element={<DashboardPage currentUser={currentUser}/>}/>
         <Route path="/analisis" element={<AnalysisPage/>}/>
