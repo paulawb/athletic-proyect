@@ -39,6 +39,10 @@ _PROMINENCE_WINDOW_S = 0.3
 _MIN_PROMINENCE_LEG_FRACTION = 0.08
 _MIN_SAME_FOOT_SEPARATION_S = 0.3
 
+# Un pie se considera bien detectado si tiene al menos esta fraccion de los
+# apoyos del otro.
+_MIN_BALANCED_FOOT_RATIO = 0.6
+
 # Postura: inclinacion del tronco respecto a la vertical. En la salida se
 # espera ~45 grados y a medida que el atleta alcanza su velocidad maxima el
 # tronco se va erguiendo hasta ~10 grados (referencia general de la
@@ -64,16 +68,17 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
 
     Todos los valores salen de las posiciones medidas en el video:
 
-    - VELOCIDAD: pendiente (m/s) del ajuste lineal de la posicion de la
-      cadera en una ventana de 0.2 s. El promedio solo considera los cuadros
-      en que el atleta se mueve; el maximo es el mayor valor suavizado.
+    - VELOCIDAD: el promedio es la distancia neta de la cadera dividida por
+      el tiempo desde que el atleta empieza a correr hasta que se detiene; el
+      maximo es la mayor pendiente (m/s) del ajuste lineal de la posicion en
+      una ventana de 0.2 s.
     - APOYOS: maximos locales de la altura de cada tobillo (el punto mas bajo
       del ciclo), con una amplitud minima relativa al largo de la pierna del
       propio atleta y una separacion minima entre apoyos del mismo pie.
-    - CADENCIA: pasos (apoyos de ambos pies) por segundo entre el primer y el
-      ultimo apoyo detectado.
-    - ZANCADA: distancia que recorre la cadera entre dos apoyos consecutivos
-      del mismo pie (un ciclo completo, dos pasos).
+    - CADENCIA: pasos por segundo entre el primer y el ultimo apoyo de la
+      carrera. Si solo un pie se detecta bien, se cuentan sus ciclos x 2.
+    - ZANCADA: longitud promedio de un paso (distancia de la cadera entre dos
+      apoyos consecutivos); cadencia x zancada = velocidad.
     - POSTURA (%): que tan cerca esta la inclinacion del tronco de la
       esperada para la velocidad del momento, promediada en los cuadros en
       movimiento. 100 % = dentro de 5 grados de lo esperado; 0 % = 25 grados
@@ -96,13 +101,11 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
         analysis = self._analyze(ordered, calibrator)
 
         valid_speeds = [s for s in analysis.speeds if s is not None]
-        moving_speeds = [s for s in valid_speeds if s >= _MIN_MOVING_SPEED_MS]
-        speeds_for_average = moving_speeds or valid_speeds
-        average_speed = sum(speeds_for_average) / len(speeds_for_average) if speeds_for_average else 0.0
         maximum_speed = max(valid_speeds) if valid_speeds else 0.0
 
-        cadence = self._cadence(analysis)
-        stride_length = self._stride_length(analysis)
+        run = self._run_segment(analysis)
+        average_speed = self._average_speed(analysis, run, valid_speeds)
+        cadence, stride_length = self._cadence_and_step_length(analysis, run)
 
         moving_postures = [
             posture
@@ -260,25 +263,69 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
         return kept
 
     @staticmethod
-    def _cadence(analysis: _Analysis) -> float:
-        steps = sorted(analysis.left_strikes + analysis.right_strikes)
-        if len(steps) < 2:
-            return 0.0
-        span = analysis.timestamps[steps[-1]] - analysis.timestamps[steps[0]]
-        return (len(steps) - 1) / span if span > 0 else 0.0
+    def _run_segment(analysis: _Analysis) -> tuple[int, int] | None:
+        """Cuadros (primero, ultimo) en que el atleta va corriendo: desde que
+        arranca hasta que deja de moverse. Excluye la espera previa a la salida
+        y el frenado final."""
+        moving = [i for i, s in enumerate(analysis.speeds) if s is not None and s >= _MIN_MOVING_SPEED_MS]
+        if len(moving) < 2:
+            return None
+        return moving[0], moving[-1]
 
     @staticmethod
-    def _stride_length(analysis: _Analysis) -> float:
-        distances: list[float] = []
-        for strikes in (analysis.left_strikes, analysis.right_strikes):
-            for start, end in zip(strikes, strikes[1:]):
-                position_start, position_end = analysis.positions[start], analysis.positions[end]
-                if position_start is None or position_end is None:
-                    continue
-                distances.append(
-                    math.hypot(position_end[0] - position_start[0], position_end[1] - position_start[1])
-                )
-        return sum(distances) / len(distances) if distances else 0.0
+    def _average_speed(
+        analysis: _Analysis, run: tuple[int, int] | None, valid_speeds: list[float]
+    ) -> float:
+        """Distancia neta recorrida por la cadera / tiempo desde que empezo a
+        correr. Promediar velocidades instantaneas infla el resultado con el
+        temblor del detector."""
+        if run is not None:
+            start, end = run
+            first, last = analysis.positions[start], analysis.positions[end]
+            elapsed = analysis.timestamps[end] - analysis.timestamps[start]
+            if first is not None and last is not None and elapsed > 0:
+                return math.hypot(last[0] - first[0], last[1] - first[1]) / elapsed
+        return sum(valid_speeds) / len(valid_speeds) if valid_speeds else 0.0
+
+    @staticmethod
+    def _cadence_and_step_length(analysis: _Analysis, run: tuple[int, int] | None) -> tuple[float, float]:
+        """Cadencia (pasos/s) y longitud de paso (m) durante la carrera.
+
+        Con camara de perfil la pierna lejana suele detectarse mal; si un pie
+        tiene muchos menos apoyos que el otro, se usa solo el pie con mejor
+        deteccion y se asume que los pasos alternan (un ciclo = 2 pasos)."""
+        low, high = run if run is not None else (0, len(analysis.timestamps) - 1)
+
+        def inside(strikes: list[int]) -> list[int]:
+            return [i for i in strikes if low <= i <= high]
+
+        left, right = inside(analysis.left_strikes), inside(analysis.right_strikes)
+        fewer, more = sorted((left, right), key=len)
+        balanced = len(more) > 0 and len(fewer) >= _MIN_BALANCED_FOOT_RATIO * len(more)
+
+        if balanced:
+            strikes = sorted(left + right)
+            steps_per_cycle = 1
+        else:
+            strikes = more
+            steps_per_cycle = 2
+        if len(strikes) < 2:
+            return 0.0, 0.0
+
+        span = analysis.timestamps[strikes[-1]] - analysis.timestamps[strikes[0]]
+        if span <= 0:
+            return 0.0, 0.0
+        intervals = len(strikes) - 1
+        cadence = intervals * steps_per_cycle / span
+
+        distance = 0.0
+        for start, end in zip(strikes, strikes[1:]):
+            position_start, position_end = analysis.positions[start], analysis.positions[end]
+            if position_start is None or position_end is None:
+                continue
+            distance += math.hypot(position_end[0] - position_start[0], position_end[1] - position_start[1])
+        step_length = distance / (intervals * steps_per_cycle)
+        return cadence, step_length
 
     def _trunk_lean_angle_degrees(self, result: PoseEstimationResult) -> float | None:
         """Angulo entre el vector cadera->hombro y la vertical, en grados.

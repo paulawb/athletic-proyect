@@ -31,9 +31,11 @@ _LANDMARK_INDEX: dict[KeypointName, int] = {
     KeypointName.RIGHT_ANKLE: 28,
 }
 
-_MIN_LANDMARK_CONFIDENCE = 0.6
-_MAX_DETECTION_SIDE = 960
-_MIN_TORSO_SEPARATION = 0.025
+# En una toma de perfil la pierna lejana queda parcialmente tapada y el modelo
+# le asigna poca visibilidad; un umbral alto descartaba cuadros utiles.
+_MIN_LANDMARK_CONFIDENCE = 0.35
+_MAX_DETECTION_SIDE = 640
+_MIN_TORSO_SEPARATION = 0.02
 
 
 def _extract_valid_keypoints(landmarks, width: int, height: int) -> list[Keypoint]:
@@ -113,9 +115,9 @@ class MediaPipePoseEstimator(PoseEstimator):
     def __init__(
         self,
         model_path: str,
-        min_detection_confidence: float = 0.6,
-        min_presence_confidence: float = 0.65,
-        min_tracking_confidence: float = 0.6,
+        min_detection_confidence: float = 0.5,
+        min_presence_confidence: float = 0.5,
+        min_tracking_confidence: float = 0.5,
     ) -> None:
         if not os.path.isfile(model_path):
             raise FileNotFoundError(
