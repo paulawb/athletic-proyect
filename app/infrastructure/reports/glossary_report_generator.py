@@ -204,9 +204,9 @@ class GlossaryReportGenerator:
 
         story.append(Paragraph("Consideraciones sobre la precisión", styles["Heading2"]))
         for note in (
-            f"Escala: los metros se calculan suponiendo que el ancho del video equivale a la distancia de la "
-            f"prueba ({context.test_distance:g} m). Si la cámara encuadra una distancia distinta, "
-            "las velocidades y zancadas cambian en la misma proporción.",
+            f"Escala: los metros se calculan suponiendo que el atleta recorre la distancia de la prueba "
+            f"({context.test_distance:g} m) de la salida al final dentro del encuadre. Si recorre más o "
+            "menos que eso, las velocidades y zancadas cambian en la misma proporción.",
             "El análisis es en 2D: funciona mejor con la cámara fija, a la altura de la cadera y de lado "
             "respecto a la trayectoria del atleta, sin zoom ni movimiento.",
             "La postura y los apoyos requieren ver bien las caderas, los hombros y los tobillos; si el atleta "

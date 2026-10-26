@@ -15,6 +15,7 @@ from app.domain.repositories.video_repository import VideoRepository
 from app.domain.services.frame_processor import FrameProcessor
 from app.domain.services.metrics_calculator import CoordinateCalibrator, MetricsCalculator, MetricsResult
 from app.domain.services.pose_estimator import PoseEstimationResult, PoseEstimator
+from app.domain.services.trajectory_calibration import calibrate_to_trajectory
 from app.domain.services.video_storage import VideoStorage
 
 logger = logging.getLogger(__name__)
@@ -209,6 +210,7 @@ class ProcessVideoFrames:
             logger.warning("No se pudo calibrar (%s); se omite el calculo de metricas", exc)
             return
 
+        calibrator = calibrate_to_trajectory(self.pose_results, calibrator, reference_distance_m)
         self.metrics_result = self._metrics_calculator.calculate(self.pose_results, calibrator)
         await self._metrics_repository.create(
             Metrics(
