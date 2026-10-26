@@ -1,6 +1,7 @@
 from app.domain.services.pose_estimator import Keypoint, PoseEstimationResult
 from app.domain.services.trajectory_calibration import (
     calibrate_to_trajectory,
+    run_duration_seconds,
     simulate_tracking_camera_progress,
 )
 from app.infrastructure.calibration.linear_coordinate_calibrator import LinearCoordinateCalibrator
@@ -55,6 +56,23 @@ def test_tracking_camera_with_run_window_ignores_time_outside_it():
     assert xs[0] == xs[30] == 500
     assert round((xs[90] - xs[30]) / 100.0, 2) == 40.0
     assert xs[-1] == xs[90]
+
+
+def test_run_duration_uses_marked_window_first():
+    poses = [_pose(i, 100 + i * 8) for i in range(101)]
+
+    assert run_duration_seconds(poses, (0.5, 3.0), True) == 2.5
+
+
+def test_run_duration_uses_trajectory_extremes_for_fixed_camera():
+    # Parado 1 s, corre 2,5 s y se detiene: 10 m en 2,5 s, no en todo el video.
+    poses = [_pose(i, 100) for i in range(30)]
+    poses += [_pose(30 + i, 100 + i * 10) for i in range(76)]
+    poses += [_pose(106 + i, 850) for i in range(30)]
+
+    duration = run_duration_seconds(poses, None, True)
+
+    assert duration is not None and abs(duration - 2.5) < 0.2
 
 
 def test_trajectory_calibration_keeps_scale_when_movement_is_implausible():

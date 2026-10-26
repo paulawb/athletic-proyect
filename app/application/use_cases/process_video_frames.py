@@ -18,6 +18,7 @@ from app.domain.services.pose_estimator import PoseEstimationResult, PoseEstimat
 from app.domain.services.trajectory_calibration import (
     TRACKING_CAMERA_MIN_DISTANCE_M,
     calibrate_to_trajectory,
+    run_duration_seconds,
     simulate_tracking_camera_progress,
 )
 from app.domain.services.video_storage import VideoStorage
@@ -225,6 +226,16 @@ class ProcessVideoFrames:
             metric_poses = self.pose_results
             calibrator = calibrate_to_trajectory(self.pose_results, calibrator, reference_distance_m, run_window)
         self.metrics_result = self._metrics_calculator.calculate(metric_poses, calibrator)
+        duration_s = run_duration_seconds(
+            self.pose_results, run_window, use_trajectory_extremes=reference_distance_m < TRACKING_CAMERA_MIN_DISTANCE_M
+        )
+        if duration_s is not None:
+            average_speed = reference_distance_m / duration_s
+            self.metrics_result = dataclasses.replace(
+                self.metrics_result,
+                average_speed=average_speed,
+                maximum_speed=max(self.metrics_result.maximum_speed, average_speed),
+            )
         await self._metrics_repository.create(
             Metrics(
                 analysis_id=analysis_id,

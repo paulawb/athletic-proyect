@@ -61,6 +61,45 @@ def calibrate_to_trajectory(
     return RescaledCalibrator(calibrator, factor)
 
 
+def run_duration_seconds(
+    pose_results: list[PoseEstimationResult],
+    run_window: tuple[float, float] | None,
+    use_trajectory_extremes: bool,
+) -> float | None:
+    """Tiempo que tardó el atleta en cubrir la distancia de la prueba: la
+    ventana marcada por el usuario o, si no hay, el intervalo entre el primer
+    y el último punto del recorrido (cámara fija) o entre la primera y la
+    última detección (cámara en seguimiento)."""
+    if run_window is not None:
+        duration = run_window[1] - run_window[0]
+        return duration if duration > 0 else None
+    detected = sorted(
+        (r for r in pose_results if _hip_x_pixels([r])), key=lambda r: r.frame_number
+    )
+    if len(detected) < _SMOOTHING_WINDOW * 2:
+        return None
+    if use_trajectory_extremes:
+        xs = _hip_x_pixels(detected)
+        half = _SMOOTHING_WINDOW // 2
+        smoothed = [statistics.median(xs[max(0, i - half) : i + half + 1]) for i in range(len(xs))]
+        low, high = min(smoothed), max(smoothed)
+        margin = 0.02 * (high - low)
+        direction = 1 if smoothed[-1] >= smoothed[0] else -1
+        if direction < 0:
+            smoothed = [-v for v in smoothed]
+            low, high = -high, -low
+        try:
+            start_idx = max(i for i, v in enumerate(smoothed) if v <= low + margin and i <= smoothed.index(max(smoothed)))
+            end_idx = next(i for i, v in enumerate(smoothed) if v >= high - margin)
+        except (ValueError, StopIteration):
+            return None
+        times = [detected[start_idx].timestamp, detected[end_idx].timestamp]
+    else:
+        times = [detected[0].timestamp, detected[-1].timestamp]
+    duration = times[1] - times[0]
+    return duration if duration > 0 else None
+
+
 # Desde esta distancia la cámara acompaña al atleta, así que su posición en el
 # cuadro casi no cambia y el desplazamiento no se puede medir en píxeles.
 TRACKING_CAMERA_MIN_DISTANCE_M = 20.0
