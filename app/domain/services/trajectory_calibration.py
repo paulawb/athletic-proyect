@@ -1,4 +1,5 @@
 import statistics
+from dataclasses import replace
 
 from app.domain.services.metrics_calculator import CoordinateCalibrator
 from app.domain.services.pose_estimator import KeypointName, PoseEstimationResult
@@ -54,3 +55,43 @@ def calibrate_to_trajectory(
     if not _MIN_SCALE_FACTOR <= factor <= _MAX_SCALE_FACTOR:
         return calibrator
     return RescaledCalibrator(calibrator, factor)
+
+
+# Desde esta distancia la cámara acompaña al atleta, así que su posición en el
+# cuadro casi no cambia y el desplazamiento no se puede medir en píxeles.
+TRACKING_CAMERA_MIN_DISTANCE_M = 20.0
+
+
+def simulate_tracking_camera_progress(
+    pose_results: list[PoseEstimationResult],
+    calibrator: CoordinateCalibrator,
+    reference_distance_m: float,
+) -> list[PoseEstimationResult]:
+    """Con cámara en seguimiento, suma a la x de cada cuadro el avance de una
+    carrera que cubre la distancia de la prueba entre la primera y la última
+    detección (velocidad media = distancia / tiempo). Solo para calcular
+    métricas; los puntos originales no se modifican."""
+    ordered = sorted(pose_results, key=lambda r: r.frame_number)
+    timed = [r for r in ordered if _hip_x_pixels([r])]
+    if len(timed) < _SMOOTHING_WINDOW * 2 or reference_distance_m <= 0:
+        return pose_results
+    t0, t1 = timed[0].timestamp, timed[-1].timestamp
+    if t1 - t0 <= 0:
+        return pose_results
+    anchor_x = _hip_x_pixels([timed[0]])[0]
+    try:
+        meters_per_px = calibrator.pixel_to_world(anchor_x + 1.0, 0.0)[0] - calibrator.pixel_to_world(anchor_x, 0.0)[0]
+    except ValueError:
+        return pose_results
+    if meters_per_px <= 0:
+        return pose_results
+    px_total = reference_distance_m / meters_per_px
+
+    shifted: list[PoseEstimationResult] = []
+    for result in ordered:
+        progress = min(max((result.timestamp - t0) / (t1 - t0), 0.0), 1.0)
+        offset = px_total * progress
+        shifted.append(
+            replace(result, keypoints=[replace(kp, x=kp.x + offset) for kp in result.keypoints])
+        )
+    return shifted

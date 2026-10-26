@@ -1,5 +1,8 @@
 from app.domain.services.pose_estimator import Keypoint, PoseEstimationResult
-from app.domain.services.trajectory_calibration import calibrate_to_trajectory
+from app.domain.services.trajectory_calibration import (
+    calibrate_to_trajectory,
+    simulate_tracking_camera_progress,
+)
 from app.infrastructure.calibration.linear_coordinate_calibrator import LinearCoordinateCalibrator
 from app.domain.services.metrics_calculator import CameraCalibration
 
@@ -26,6 +29,20 @@ def test_trajectory_calibration_makes_run_match_test_distance():
     end = calibrator.pixel_to_world(900, 0)[0]
     # La mediana de los extremos recorta ~2 cuadros, de ahí la tolerancia.
     assert abs((end - start) - 10.0) < 0.3
+
+
+
+def test_tracking_camera_progress_gives_distance_over_time():
+    # Cámara en seguimiento: la cadera queda quieta en píxeles durante 4 s.
+    poses = [_pose(i, 500) for i in range(121)]
+    base = LinearCoordinateCalibrator(CameraCalibration(pixels_per_meter=100.0, reference_distance_m=40.0))
+
+    shifted = simulate_tracking_camera_progress(poses, base, 40.0)
+
+    first = shifted[0].keypoints[0].x
+    last = shifted[-1].keypoints[0].x
+    assert round((last - first) / 100.0, 2) == 40.0
+    assert poses[-1].keypoints[0].x == 500
 
 
 def test_trajectory_calibration_keeps_scale_when_movement_is_implausible():
