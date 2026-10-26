@@ -29,6 +29,9 @@ const navItems = [
   { to: "/configuracion", label: "Configuración", icon: SettingsIcon },
 ];
 
+// Copia local de los videos subidos en esta sesión: el servidor gratuito borra los archivos al reiniciarse.
+const localVideos = new Map<number, string>();
+
 function App() {
   const [authorized, setAuthorized] = useState(Boolean(localStorage.getItem("athletic-token")));
   const [currentUser,setCurrentUser]=useState<CurrentUser|null>(null);const [profileError,setProfileError]=useState("");
@@ -113,7 +116,7 @@ function AnalysisPage() {
   useEffect(()=>{const id=searchParams.get("analysis");if(id)api<Analysis>(`/analisis/${id}`).then(setAnalysis).catch(e=>setError(message(e)));},[searchParams]);
   useEffect(()=>{if(!analysis||["COMPLETED","FAILED"].includes(analysis.status))return; const timer=window.setInterval(()=>api<Analysis>(`/analisis/${analysis.id}`).then(setAnalysis).catch(e=>setError(message(e))),2000); return()=>window.clearInterval(timer);},[analysis]);
   useEffect(()=>{if(analysis?.status==="COMPLETED")api<Metrics>(`/analisis/${analysis.id}/metricas`).then(setMetrics).catch(e=>setError(message(e)));},[analysis?.status,analysis?.id]);
-  useEffect(()=>{if(!analysis||!metrics)return;let objectUrl="";let cancelled=false;setVideoMissing(false);Promise.all([api<AnalysisFrames>(`/analisis/${analysis.id}/frames`),api<Analysis[]>("/analisis")]).then(([frames,all])=>{if(cancelled)return;setFrameData(frames);setComparisons(all.filter(a=>a.id!==analysis.id&&a.status==="COMPLETED"));}).catch(e=>{if(!cancelled)setError(message(e));});apiBlob(`/videos/${analysis.video_id}/content`).then(blob=>{if(cancelled)return;objectUrl=URL.createObjectURL(blob);setVideoSrc(objectUrl);}).catch(()=>{if(!cancelled)setVideoMissing(true);});return()=>{cancelled=true;if(objectUrl)URL.revokeObjectURL(objectUrl);};},[analysis?.id,metrics]);
+  useEffect(()=>{if(!analysis||!metrics)return;let objectUrl="";let cancelled=false;setVideoMissing(false);Promise.all([api<AnalysisFrames>(`/analisis/${analysis.id}/frames`),api<Analysis[]>("/analisis")]).then(([frames,all])=>{if(cancelled)return;setFrameData(frames);setComparisons(all.filter(a=>a.id!==analysis.id&&a.status==="COMPLETED"));}).catch(e=>{if(!cancelled)setError(message(e));});const localVideo=localVideos.get(analysis.video_id);if(localVideo){setVideoSrc(localVideo);}else{apiBlob(`/videos/${analysis.video_id}/content`).then(blob=>{if(cancelled)return;objectUrl=URL.createObjectURL(blob);setVideoSrc(objectUrl);}).catch(()=>{if(!cancelled)setVideoMissing(true);});}return()=>{cancelled=true;if(objectUrl)URL.revokeObjectURL(objectUrl);};},[analysis?.id,metrics]);
   useEffect(()=>{const video=player.current;if(!video||!videoSrc)return;let handle=0;let stopped=false;const withCallback="requestVideoFrameCallback" in video;const tick=(_now?:number,meta?:{mediaTime:number})=>{if(stopped)return;setCurrentTime(meta?meta.mediaTime:video.currentTime);handle=withCallback?(video as HTMLVideoElement&{requestVideoFrameCallback:(cb:(now:number,meta:{mediaTime:number})=>void)=>number}).requestVideoFrameCallback(tick):window.requestAnimationFrame(()=>tick());};tick();return()=>{stopped=true;if(withCallback)(video as HTMLVideoElement&{cancelVideoFrameCallback:(id:number)=>void}).cancelVideoFrameCallback(handle);else window.cancelAnimationFrame(handle);};},[videoSrc,frameData]);
   const detailed=searchParams.get("detail")==="1";
   const nearestFrame=useMemo(()=>{const frames=frameData?.frames;if(!frames?.length)return null;let low=0,high=frames.length-1;while(low<high){const mid=(low+high)>>1;if(frames[mid].timestamp<currentTime)low=mid+1;else high=mid;}const before=frames[Math.max(0,low-1)];return Math.abs(before.timestamp-currentTime)<=Math.abs(frames[low].timestamp-currentTime)?before:frames[low];},[frameData,currentTime]);
@@ -127,6 +130,7 @@ function AnalysisPage() {
     const test=await api<Test>("/pruebas",{method:"POST",body:JSON.stringify({athlete_id:athleteId,distance:Number(distance),test_type:testType,technique,test_date:date})});
     const body=new FormData(); body.append("video",file);
     const result=await api<{analysis_id:number;video_id:number;status:string}>(`/analisis/procesar-video?test_id=${test.id}`,{method:"POST",body});
+    localVideos.set(result.video_id,URL.createObjectURL(file));
     setAnalysis({id:result.analysis_id,video_id:result.video_id,status:result.status,progress_percentage:0});
   }catch(err){setError(message(err));}finally{setBusy(false);}};
   const reprocess = async()=>{if(!analysis)return;setBusy(true);setError("");try{const result=await api<{analysis_id:number;status:string}>("/analisis",{method:"POST",body:JSON.stringify({video_id:analysis.video_id})});setMetrics(null);setFrameData(null);setVideoSrc("");setAnalysis({id:result.analysis_id,video_id:analysis.video_id,status:result.status,progress_percentage:0});setSearchParams({analysis:String(result.analysis_id),detail:"1"});}catch(err){setError(message(err));}finally{setBusy(false);}};
