@@ -24,5 +24,7 @@ class VideoModel(Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_frames: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    run_start_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    run_end_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="UPLOADED")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

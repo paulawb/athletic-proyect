@@ -214,11 +214,16 @@ class ProcessVideoFrames:
             logger.warning("No se pudo calibrar (%s); se omite el calculo de metricas", exc)
             return
 
+        run_window = None
+        if video.run_start_s is not None and video.run_end_s is not None:
+            run_window = (video.run_start_s, video.run_end_s)
         if reference_distance_m >= TRACKING_CAMERA_MIN_DISTANCE_M:
-            metric_poses = simulate_tracking_camera_progress(self.pose_results, calibrator, reference_distance_m)
+            metric_poses = simulate_tracking_camera_progress(
+                self.pose_results, calibrator, reference_distance_m, run_window
+            )
         else:
             metric_poses = self.pose_results
-            calibrator = calibrate_to_trajectory(self.pose_results, calibrator, reference_distance_m)
+            calibrator = calibrate_to_trajectory(self.pose_results, calibrator, reference_distance_m, run_window)
         self.metrics_result = self._metrics_calculator.calculate(metric_poses, calibrator)
         await self._metrics_repository.create(
             Metrics(

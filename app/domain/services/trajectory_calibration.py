@@ -36,10 +36,14 @@ def calibrate_to_trajectory(
     pose_results: list[PoseEstimationResult],
     calibrator: CoordinateCalibrator,
     reference_distance_m: float,
+    run_window: tuple[float, float] | None = None,
 ) -> CoordinateCalibrator:
     """Ajusta la escala para que el recorrido horizontal de la cadera, de la
     salida al final, equivalga a la distancia de la prueba. Requiere cámara
-    fija y que el atleta recorra toda la distancia dentro del encuadre."""
+    fija y que el atleta recorra toda la distancia dentro del encuadre.
+    Con `run_window` (segundos de salida y llegada) solo se usa ese tramo."""
+    if run_window is not None:
+        pose_results = [r for r in pose_results if run_window[0] <= r.timestamp <= run_window[1]]
     xs = _hip_x_pixels(pose_results)
     if len(xs) < _SMOOTHING_WINDOW * 2 or reference_distance_m <= 0:
         return calibrator
@@ -66,16 +70,19 @@ def simulate_tracking_camera_progress(
     pose_results: list[PoseEstimationResult],
     calibrator: CoordinateCalibrator,
     reference_distance_m: float,
+    run_window: tuple[float, float] | None = None,
 ) -> list[PoseEstimationResult]:
     """Con cámara en seguimiento, suma a la x de cada cuadro el avance de una
-    carrera que cubre la distancia de la prueba entre la primera y la última
-    detección (velocidad media = distancia / tiempo). Solo para calcular
-    métricas; los puntos originales no se modifican."""
+    carrera que cubre la distancia de la prueba entre la salida y la llegada
+    (velocidad media = distancia / tiempo). Sin `run_window` se usan la primera
+    y la última detección; con ella, el atleta está quieto antes de la salida y
+    parado tras la llegada. Solo para calcular métricas; los puntos originales
+    no se modifican."""
     ordered = sorted(pose_results, key=lambda r: r.frame_number)
     timed = [r for r in ordered if _hip_x_pixels([r])]
     if len(timed) < _SMOOTHING_WINDOW * 2 or reference_distance_m <= 0:
         return pose_results
-    t0, t1 = timed[0].timestamp, timed[-1].timestamp
+    t0, t1 = run_window if run_window is not None else (timed[0].timestamp, timed[-1].timestamp)
     if t1 - t0 <= 0:
         return pose_results
     anchor_x = _hip_x_pixels([timed[0]])[0]

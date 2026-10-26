@@ -401,6 +401,8 @@ async def get_analysis_glossary(
 @router.post("/procesar-video", response_model=ProcessVideoResponseDTO, status_code=202)
 async def upload_and_queue_analysis(
     test_id: int,
+    run_start_s: float | None = None,
+    run_end_s: float | None = None,
     video: UploadFile = File(..., description="Archivo de video (MP4 o MOV)"),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     session: AsyncSession = Depends(get_db_session),
@@ -415,6 +417,15 @@ async def upload_and_queue_analysis(
     La sesion de BD sigue viva mientras la tarea en segundo plano
     procesa el video, exactamente igual que en create_analysis.
     """
+    if (run_start_s is None) != (run_end_s is None) or (
+        run_start_s is not None
+        and run_end_s is not None
+        and (run_start_s < 0 or run_end_s <= run_start_s)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Indica el segundo de salida y el de llegada, y la llegada debe ser posterior a la salida",
+        )
     await require_owned_test(session, test_id, user_id(current_user))
     settings = get_settings()
     upload_use_case = UploadVideo(
@@ -424,7 +435,7 @@ async def upload_and_queue_analysis(
         frame_processor=OpenCVFrameProcessor(),
         max_size_bytes=settings.max_video_size_mb * 1024 * 1024,
     )
-    stored = await upload_use_case.execute(test_id, video)
+    stored = await upload_use_case.execute(test_id, video, run_start_s, run_end_s)
     if stored.id is None:
         raise HTTPException(status_code=500, detail="No se pudo registrar el video cargado")
 

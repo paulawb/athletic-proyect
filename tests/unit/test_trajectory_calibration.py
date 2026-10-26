@@ -45,6 +45,18 @@ def test_tracking_camera_progress_gives_distance_over_time():
     assert poses[-1].keypoints[0].x == 500
 
 
+def test_tracking_camera_with_run_window_ignores_time_outside_it():
+    poses = [_pose(i, 500) for i in range(121)]  # 4 s a 30 fps
+    base = LinearCoordinateCalibrator(CameraCalibration(pixels_per_meter=100.0, reference_distance_m=40.0))
+
+    shifted = simulate_tracking_camera_progress(poses, base, 40.0, run_window=(1.0, 3.0))
+
+    xs = [r.keypoints[0].x for r in shifted]
+    assert xs[0] == xs[30] == 500
+    assert round((xs[90] - xs[30]) / 100.0, 2) == 40.0
+    assert xs[-1] == xs[90]
+
+
 def test_trajectory_calibration_keeps_scale_when_movement_is_implausible():
     poses = [_pose(i, 500 + i * 0.1) for i in range(101)]
     base = LinearCoordinateCalibrator(CameraCalibration(pixels_per_meter=100.0, reference_distance_m=10.0))

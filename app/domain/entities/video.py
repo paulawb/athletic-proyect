@@ -21,5 +21,7 @@ class Video:
     width: int | None = None
     height: int | None = None
     total_frames: int | None = None
+    run_start_s: float | None = None
+    run_end_s: float | None = None
     status: VideoStatus = VideoStatus.UPLOADED
     created_at: datetime | None = None

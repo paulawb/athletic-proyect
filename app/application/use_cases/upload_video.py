@@ -36,7 +36,13 @@ class UploadVideo:
         self._frame_processor = frame_processor
         self._max_size_bytes = max_size_bytes
 
-    async def execute(self, test_id: int, file: UploadedFileLike) -> Video:
+    async def execute(
+        self,
+        test_id: int,
+        file: UploadedFileLike,
+        run_start_s: float | None = None,
+        run_end_s: float | None = None,
+    ) -> Video:
         test = await self._test_repository.get_by_id(test_id)
         if test is None:
             raise TestNotFoundError(f"No existe una prueba con id={test_id}")
@@ -72,6 +78,8 @@ class UploadVideo:
             width=metadata.width,
             height=metadata.height,
             total_frames=metadata.total_frames,
+            run_start_s=run_start_s,
+            run_end_s=run_end_s,
             status=VideoStatus.VALIDATED,
         )
         return await self._video_repository.create(video)

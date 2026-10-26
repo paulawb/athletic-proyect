@@ -21,6 +21,8 @@ class SqlAlchemyVideoRepository(VideoRepository):
             width=video.width,
             height=video.height,
             total_frames=video.total_frames,
+            run_start_s=video.run_start_s,
+            run_end_s=video.run_end_s,
             status=video.status.value,
         )
         self._session.add(model)
@@ -52,6 +54,8 @@ class SqlAlchemyVideoRepository(VideoRepository):
             width=model.width,
             height=model.height,
             total_frames=model.total_frames,
+            run_start_s=model.run_start_s,
+            run_end_s=model.run_end_s,
             status=VideoStatus(model.status),
             created_at=model.created_at,
         )
