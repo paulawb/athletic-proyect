@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 # cuadro golpearia la base de datos innecesariamente en un video de miles
 # de frames; cada 10 es un punto medio razonable para esta fase.
 _PROGRESS_UPDATE_EVERY = 10
+# Los videos de celular a 60 fps o más no mejoran las métricas con cada cuadro:
+# se estima la pose a ~20 fps o más y se descartan los intermedios.
+_TARGET_ANALYSIS_FPS = 20
+
+
+def _analysis_frame_step(fps: float | None) -> int:
+    if not fps or fps <= 0:
+        return 1
+    return max(1, int(fps // _TARGET_ANALYSIS_FPS))
 
 _ITERATOR_EXHAUSTED = object()
 
@@ -116,6 +125,7 @@ class ProcessVideoFrames:
         self.pose_results = []
         self.metrics_result = None
         frame_iterator = self._frame_processor.iterate_frames(absolute_path)
+        frame_step = _analysis_frame_step(video.fps)
 
         try:
             try:
@@ -130,25 +140,19 @@ class ProcessVideoFrames:
                             f"Cuadro {frame_number} ilegible durante el procesamiento"
                         )
 
-                    # Los resultados de pose son livianos (unos pocos puntos
-                    # por cuadro) a diferencia del cuadro de video en si;
-                    # acumularlos aqui no repite el problema que
-                    # iterate_frames() evita (nunca cargar el video completo
-                    # en memoria). La estimacion en si se delega a un hilo
-                    # igual que la lectura del cuadro: con MockPoseEstimator
-                    # (Fase 5) era trivial, pero un modelo real (Fase 9,
-                    # MediaPipePoseEstimator) sí puede tardar lo suficiente
-                    # por cuadro como para bloquear el event loop si se
-                    # llamara directamente.
-                    # MediaPipe exige milisegundos estrictamente crecientes.
-                    timestamp_ms = max(round(timestamp * 1000), last_timestamp_ms + 1)
-                    last_timestamp_ms = timestamp_ms
-                    pose_result = await asyncio.to_thread(
-                        self._pose_estimator.estimate, frame, frame_number, timestamp_ms
-                    )
-                    self.pose_results.append(dataclasses.replace(pose_result, timestamp=timestamp))
-
                     processed_frames = frame_number + 1
+                    if frame_number % frame_step == 0:
+                        # Los resultados de pose son livianos (unos pocos puntos
+                        # por cuadro); la estimación se delega a un hilo para no
+                        # bloquear el event loop.
+                        # MediaPipe exige milisegundos estrictamente crecientes.
+                        timestamp_ms = max(round(timestamp * 1000), last_timestamp_ms + 1)
+                        last_timestamp_ms = timestamp_ms
+                        pose_result = await asyncio.to_thread(
+                            self._pose_estimator.estimate, frame, frame_number, timestamp_ms
+                        )
+                        self.pose_results.append(dataclasses.replace(pose_result, timestamp=timestamp))
+
                     if processed_frames % _PROGRESS_UPDATE_EVERY == 0:
                         await self._analysis_repository.update_progress(
                             analysis_id, AnalysisStatus.PROCESSING, processed_frames
