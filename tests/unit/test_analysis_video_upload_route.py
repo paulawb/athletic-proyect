@@ -10,7 +10,7 @@ class FakeUploadVideo:
     def __init__(self, **kwargs) -> None:
         pass
 
-    async def execute(self, test_id, video):
+    async def execute(self, test_id, video, run_start_s=None, run_end_s=None):
         return Video(
             id=42,
             test_id=test_id,
