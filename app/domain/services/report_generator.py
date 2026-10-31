@@ -27,7 +27,7 @@ class AnalysisReportData:
     (Fase 11) la ensambla desde varios repositorios; ReportGenerator
     solo la recibe ya armada -no conoce SQLAlchemy ni ningun repositorio."""
 
-    athlete_full_name: str
+    athlete_code: str
     athlete_identification: str
     test_label: str
     test_date: datetime | None

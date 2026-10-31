@@ -16,6 +16,7 @@ from app.application.use_cases.list_athletes import ListAthletes
 from app.core.database import get_db_session
 from app.core.timezone import format_local
 from app.domain.entities.user import User
+from app.domain.services.athlete_code import athlete_code, athlete_id_from_code
 from app.infrastructure.database.models.analysis_model import AnalysisModel
 from app.infrastructure.database.models.athlete_model import AthleteModel
 from app.infrastructure.database.models.metrics_model import MetricsModel
@@ -53,14 +54,11 @@ async def list_athletes(
     query = select(AthleteModel).where(AthleteModel.owner_user_id == user_id(current_user))
     if q:
         term = f"%{q.strip()}%"
-        query = query.where(
-            or_(
-                AthleteModel.first_name.ilike(term),
-                AthleteModel.last_name.ilike(term),
-                AthleteModel.identification.ilike(term),
-                AthleteModel.email.ilike(term),
-            )
-        )
+        code_id = athlete_id_from_code(q)
+        filters = [AthleteModel.identification.ilike(term), AthleteModel.email.ilike(term)]
+        if code_id is not None:
+            filters.append(AthleteModel.id == code_id)
+        query = query.where(or_(*filters))
     if category:
         query = query.where(AthleteModel.category == category)
     if group_name:
@@ -130,12 +128,12 @@ async def export_athletes(
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(
-        ["id", "first_name", "last_name", "identification", "email", "age", "gender", "category", "group_name", "is_active"]
+        ["id", "code", "identification", "email", "age", "gender", "category", "group_name", "is_active"]
     )
     for athlete in athletes:
         writer.writerow(
             [
-                athlete.id, athlete.first_name, athlete.last_name, athlete.identification,
+                athlete.id, athlete_code(athlete.id), athlete.identification,
                 athlete.email or "", athlete.age, athlete.gender, athlete.category or "",
                 athlete.group_name or "", athlete.is_active,
             ]
@@ -177,11 +175,11 @@ async def export_full_report(
     ).all()
 
     athlete_headers = [
-        "ID", "Nombre", "Apellidos", "Documento", "Correo", "Edad", "Género", "Categoría", "Grupo", "Estado",
+        "ID", "C?digo", "Documento", "Correo", "Edad", "Género", "Categoría", "Grupo", "Estado",
         "Pruebas", "Análisis completados", "Velocidad promedio media (m/s)", "Mejor velocidad máxima (m/s)",
     ]
     test_headers = [
-        "ID atleta", "Atleta", "Documento", "Edad", "Género", "Categoría", "Grupo", "Código prueba", "Fecha y hora",
+        "ID atleta", "C?digo atleta", "Documento", "Edad", "Género", "Categoría", "Grupo", "Código prueba", "Fecha y hora",
         "Distancia (m)", "Tipo de prueba", "Técnica", "Video", "Análisis", "Estado",
         "Velocidad promedio (m/s)", "Velocidad máxima (m/s)", "Longitud de zancada (m)", "Cadencia (pasos/s)",
         "Postura (%)",
@@ -197,7 +195,7 @@ async def export_full_report(
         done = [metrics for _, _, _, metrics in entries if metrics is not None]
         athlete_rows.append(
             [
-                athlete.id, athlete.first_name, athlete.last_name, athlete.identification, athlete.email or "",
+                athlete.id, athlete_code(athlete.id), athlete.identification, athlete.email or "",
                 athlete.age, athlete.gender, athlete.category or "", athlete.group_name or "",
                 "Activo" if athlete.is_active else "Inactivo",
                 len({test.id for test, _, _, _ in entries}), len(done),
@@ -206,7 +204,7 @@ async def export_full_report(
             ]
         )
         base = [
-            athlete.id, f"{athlete.first_name} {athlete.last_name}", athlete.identification, athlete.age,
+            athlete.id, athlete_code(athlete.id), athlete.identification, athlete.age,
             athlete.gender, athlete.category or "", athlete.group_name or "",
         ]
         if not entries:

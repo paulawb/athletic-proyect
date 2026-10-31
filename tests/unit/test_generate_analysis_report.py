@@ -209,7 +209,7 @@ async def test_generate_report_assembles_athlete_test_and_metrics() -> None:
 
     assert report_generator.received is not None
     data = report_generator.received
-    assert data.athlete_full_name == "Juan Pérez"
+    assert data.athlete_code == "ATL-0001"
     assert data.athlete_identification == "100123456"
     assert data.metrics.average_speed == 7.2
     assert len(data.frame_metrics) == 5

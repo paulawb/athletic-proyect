@@ -14,6 +14,7 @@ from app.infrastructure.database.stale_analyses import fail_stale_analyses
 from app.infrastructure.video.local_video_storage import LocalVideoStorage
 from app.core.config import get_settings
 from app.domain.entities.user import User
+from app.domain.services.athlete_code import athlete_id_from_code
 from app.infrastructure.database.models.analysis_model import AnalysisModel
 from app.infrastructure.database.models.athlete_model import AthleteModel
 from app.infrastructure.database.models.metrics_model import MetricsModel
@@ -80,8 +81,7 @@ async def list_tests(
         conditions.append(
             or_(
                 func.cast(TestModel.id, str).ilike(term),
-                AthleteModel.first_name.ilike(term),
-                AthleteModel.last_name.ilike(term),
+                AthleteModel.id == (athlete_id_from_code(q) or -1),
                 TestModel.test_type.ilike(term),
                 TestModel.technique.ilike(term),
             )

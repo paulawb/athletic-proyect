@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app.core.exceptions import AnalysisNotFoundError, MetricsNotFoundError
 from app.domain.entities.analysis import AnalysisStatus
+from app.domain.services.athlete_code import athlete_code
 from app.domain.repositories.analysis_repository import AnalysisRepository
 from app.domain.repositories.athlete_repository import AthleteRepository
 from app.domain.repositories.metrics_repository import FrameMetricsRepository, MetricsRepository
@@ -60,8 +61,8 @@ class GenerateAnalysisReport:
         )
 
         report_data = AnalysisReportData(
-            athlete_full_name=(
-                f"{athlete.first_name} {athlete.last_name}" if athlete is not None else "Atleta desconocido"
+            athlete_code=(
+                athlete_code(athlete.id) if athlete is not None else "Atleta desconocido"
             ),
             athlete_identification=athlete.identification if athlete is not None else "-",
             test_label=f"Prueba #{test.id}" if test is not None else "-",

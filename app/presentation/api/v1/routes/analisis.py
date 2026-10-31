@@ -1,3 +1,4 @@
+from app.domain.services.athlete_code import athlete_code
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -381,7 +382,7 @@ async def get_analysis_glossary(
     pdf_bytes = GlossaryReportGenerator().generate(
         GlossaryContext(
             analysis_id=analysis_id,
-            athlete_full_name=f"{athlete.first_name} {athlete.last_name}" if athlete else "Atleta desconocido",
+            athlete_code=athlete_code(athlete.id) if athlete else "Atleta desconocido",
             test_distance=test.distance if test else 0,
             average_speed=metrics.average_speed,
             maximum_speed=metrics.maximum_speed,

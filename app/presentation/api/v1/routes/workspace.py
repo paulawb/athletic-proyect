@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.domain.entities.user import User
+from app.domain.services.athlete_code import athlete_code
 from app.core.phone import normalize_phone
 from app.core.timezone import format_local, resolve_timezone
 
@@ -126,7 +127,7 @@ async def dashboard_stats(
     recent = [
         {
             "test_id": test.id,
-            "athlete_name": f"{athlete.first_name} {athlete.last_name}",
+            "athlete_code": athlete_code(athlete.id),
             "distance": test.distance,
             "test_type": test.test_type,
             "status": analysis.status if analysis else test.status,
@@ -297,8 +298,7 @@ async def export_user_data(
         "athletes": [
             {
                 "id": athlete.id,
-                "first_name": athlete.first_name,
-                "last_name": athlete.last_name,
+                "code": athlete_code(athlete.id),
                 "identification": athlete.identification,
                 "email": athlete.email,
                 "age": athlete.age,
@@ -625,7 +625,7 @@ async def generate_report(
         [
             analysis.id,
             test.id,
-            f"{athlete.first_name} {athlete.last_name}",
+            athlete_code(athlete.id),
             format_local(test.created_at, tz_name),
             test.distance,
             *[getattr(metrics, field) for field in payload.metrics],

@@ -72,7 +72,7 @@ class PdfReportGenerator(ReportGenerator):
         date_label = format_local(report_data.test_date, report_data.timezone_name)
         return [
             Paragraph(
-                f"<b>Atleta:</b> {report_data.athlete_full_name} ({report_data.athlete_identification})",
+                f"<b>Atleta:</b> {report_data.athlete_code} ({report_data.athlete_identification})",
                 styles["Normal"],
             ),
             Paragraph(f"<b>Fecha de la prueba:</b> {date_label}", styles["Normal"]),

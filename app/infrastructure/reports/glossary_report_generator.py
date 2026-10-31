@@ -15,7 +15,7 @@ class GlossaryContext:
     """Datos del analisis cuyos valores se muestran junto a cada definicion."""
 
     analysis_id: int
-    athlete_full_name: str
+    athlete_code: str
     test_distance: float
     average_speed: float
     maximum_speed: float
@@ -165,7 +165,7 @@ class GlossaryReportGenerator:
         story = [
             Paragraph("Glosario de variables del análisis", styles["Title"]),
             Paragraph(
-                f"<b>Atleta:</b> {context.athlete_full_name} · <b>Análisis:</b> #{context.analysis_id} · "
+                f"<b>Atleta:</b> {context.athlete_code} · <b>Análisis:</b> #{context.analysis_id} · "
                 f"<b>Distancia de la prueba:</b> {context.test_distance:g} m",
                 styles["Normal"],
             ),

@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from app.domain.services.athlete_code import athlete_code
 
 
 class AthleteCreateDTO(BaseModel):
@@ -30,8 +32,6 @@ class AthleteResponseDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    first_name: str
-    last_name: str
     identification: str
     age: int
     gender: str
@@ -42,3 +42,8 @@ class AthleteResponseDTO(BaseModel):
     test_count: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @computed_field
+    @property
+    def code(self) -> str:
+        return athlete_code(self.id)
