@@ -23,6 +23,7 @@ class MetricsResult:
     stride_length: float
     cadence: float
     posture_score: float
+    step_count: int | None = None
 
 
 @dataclass(frozen=True)

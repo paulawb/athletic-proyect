@@ -389,6 +389,7 @@ async def get_analysis_glossary(
             stride_length=metrics.stride_length,
             cadence=metrics.cadence,
             posture_score=metrics.posture_score,
+            step_count=metrics.step_count,
             detection_coverage=coverage,
         )
     )

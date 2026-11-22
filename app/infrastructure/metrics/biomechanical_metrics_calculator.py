@@ -105,7 +105,7 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
 
         run = self._run_segment(analysis)
         average_speed = self._average_speed(analysis, run, valid_speeds)
-        cadence, stride_length = self._cadence_and_step_length(analysis, run)
+        cadence, stride_length, step_count = self._cadence_and_step_length(analysis, run)
 
         moving_postures = [
             posture
@@ -122,6 +122,7 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
             stride_length=round(stride_length, 2),
             cadence=round(cadence, 2),
             posture_score=round(posture_score, 2),
+            step_count=step_count,
         )
 
     def calculate_frame_metrics(
@@ -288,8 +289,10 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
         return sum(valid_speeds) / len(valid_speeds) if valid_speeds else 0.0
 
     @staticmethod
-    def _cadence_and_step_length(analysis: _Analysis, run: tuple[int, int] | None) -> tuple[float, float]:
-        """Cadencia (pasos/s) y longitud de paso (m) durante la carrera.
+    def _cadence_and_step_length(
+        analysis: _Analysis, run: tuple[int, int] | None
+    ) -> tuple[float, float, int | None]:
+        """Cadencia (pasos/s), longitud de paso (m) y pasos estimados.
 
         Con camara de perfil la pierna lejana suele detectarse mal; si un pie
         tiene muchos menos apoyos que el otro, se usa solo el pie con mejor
@@ -310,13 +313,15 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
             strikes = more
             steps_per_cycle = 2
         if len(strikes) < 2:
-            return 0.0, 0.0
+            return 0.0, 0.0, None
 
         span = analysis.timestamps[strikes[-1]] - analysis.timestamps[strikes[0]]
         if span <= 0:
-            return 0.0, 0.0
+            return 0.0, 0.0, None
         intervals = len(strikes) - 1
         cadence = intervals * steps_per_cycle / span
+        run_duration = analysis.timestamps[high] - analysis.timestamps[low]
+        step_count = max(1, round(cadence * run_duration)) if run_duration > 0 else None
 
         distance = 0.0
         for start, end in zip(strikes, strikes[1:]):
@@ -325,7 +330,7 @@ class BiomechanicalMetricsCalculator(MetricsCalculator):
                 continue
             distance += math.hypot(position_end[0] - position_start[0], position_end[1] - position_start[1])
         step_length = distance / (intervals * steps_per_cycle)
-        return cadence, step_length
+        return cadence, step_length, step_count
 
     def _trunk_lean_angle_degrees(self, result: PoseEstimationResult) -> float | None:
         """Angulo entre el vector cadera->hombro y la vertical, en grados.

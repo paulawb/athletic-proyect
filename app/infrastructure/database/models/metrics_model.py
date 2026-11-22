@@ -18,4 +18,5 @@ class MetricsModel(Base):
     stride_length: Mapped[float] = mapped_column(Float, nullable=False)
     cadence: Mapped[float] = mapped_column(Float, nullable=False)
     posture_score: Mapped[float] = mapped_column(Float, nullable=False)
+    step_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

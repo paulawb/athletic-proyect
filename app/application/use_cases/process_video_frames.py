@@ -225,16 +225,32 @@ class ProcessVideoFrames:
         else:
             metric_poses = self.pose_results
             calibrator = calibrate_to_trajectory(self.pose_results, calibrator, reference_distance_m, run_window)
-        self.metrics_result = self._metrics_calculator.calculate(metric_poses, calibrator)
+        summary_poses = (
+            [pose for pose in metric_poses if run_window[0] <= pose.timestamp <= run_window[1]]
+            if run_window is not None
+            else metric_poses
+        )
+        self.metrics_result = self._metrics_calculator.calculate(summary_poses, calibrator)
         duration_s = run_duration_seconds(
             self.pose_results, run_window, use_trajectory_extremes=reference_distance_m < TRACKING_CAMERA_MIN_DISTANCE_M
         )
         if duration_s is not None:
             average_speed = reference_distance_m / duration_s
+            step_count = (
+                max(1, round(self.metrics_result.cadence * duration_s))
+                if self.metrics_result.cadence > 0
+                else self.metrics_result.step_count
+            )
             self.metrics_result = dataclasses.replace(
                 self.metrics_result,
                 average_speed=average_speed,
                 maximum_speed=max(self.metrics_result.maximum_speed, average_speed),
+                stride_length=(
+                    average_speed / self.metrics_result.cadence
+                    if self.metrics_result.cadence > 0
+                    else self.metrics_result.stride_length
+                ),
+                step_count=step_count,
             )
         await self._metrics_repository.create(
             Metrics(
@@ -244,6 +260,7 @@ class ProcessVideoFrames:
                 stride_length=self.metrics_result.stride_length,
                 cadence=self.metrics_result.cadence,
                 posture_score=self.metrics_result.posture_score,
+                step_count=self.metrics_result.step_count,
             )
         )
 

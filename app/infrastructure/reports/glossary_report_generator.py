@@ -22,6 +22,7 @@ class GlossaryContext:
     stride_length: float
     cadence: float
     posture_score: float
+    step_count: int | None = None
     detection_coverage: str | None = None
 
 
@@ -41,10 +42,8 @@ def _variables(context: GlossaryContext) -> list[dict[str, str]]:
             "value": f"{context.average_speed:.2f} m/s ({context.average_speed * 3.6:.1f} km/h)",
             "meaning": "Qué tan rápido se desplazó el atleta mientras corría.",
             "how": (
-                "Se sigue el punto medio de las caderas en cada cuadro del video. La velocidad de cada "
-                "momento es la pendiente de la posición en una ventana de 0,2 s (esto elimina el temblor "
-                "del detector). El promedio usa solo los cuadros en que el atleta se mueve (más de 0,5 m/s), "
-                "así el tiempo de espera antes de la salida no baja el resultado."
+                "Con tiempos de salida y llegada se divide la distancia de la prueba por el tiempo entre "
+                "ambas marcas. Sin marcas, el tiempo se estima a partir de los cuadros detectados."
             ),
             "read": "Mayor valor = atleta más rápido. Compárala con pruebas anteriores del mismo atleta.",
         },
@@ -57,18 +56,17 @@ def _variables(context: GlossaryContext) -> list[dict[str, str]]:
             "read": "Suele estar en la zona media o final de la carrera; indica la capacidad máxima del atleta.",
         },
         {
-            "name": "Longitud de zancada",
+            "name": "Longitud media del paso",
             "unit": "m",
             "value": f"{context.stride_length:.2f} m",
-            "meaning": "Distancia que avanza el atleta en un ciclo completo de carrera (dos pasos).",
+            "meaning": "Distancia promedio que avanza el atleta en cada paso.",
             "how": (
-                "Se detectan los apoyos de cada pie (el punto más bajo del tobillo en cada ciclo). La zancada "
-                "es la distancia que recorre la cadera entre dos apoyos consecutivos del mismo pie, "
-                "promediada para ambos pies. Vale 0 si no se detectaron al menos dos apoyos del mismo pie."
+                "Se detectan los apoyos de los tobillos y se divide la distancia avanzada entre los pasos "
+                "estimados. Cuando hay tiempos de salida y llegada, la distancia media por paso es la "
+                "velocidad promedio dividida entre la cadencia."
             ),
             "read": (
-                "Zancada y cadencia se relacionan con la velocidad: velocidad ≈ cadencia × zancada ÷ 2. "
-                "Una zancada más larga con la misma cadencia significa más velocidad."
+                "La relación usada es: velocidad promedio ≈ cadencia × longitud media del paso."
             ),
         },
         {
@@ -77,8 +75,8 @@ def _variables(context: GlossaryContext) -> list[dict[str, str]]:
             "value": f"{context.cadence:.2f} pasos/s",
             "meaning": "Cuántos pasos da el atleta por segundo (cada apoyo de un pie cuenta como un paso).",
             "how": (
-                "Se cuentan los apoyos de ambos pies entre el primer y el último detectado, y se dividen "
-                "por el tiempo transcurrido entre ellos. Vale 0 si se detectaron menos de dos apoyos."
+                "Se estima a partir de los intervalos entre apoyos detectados. Si un tobillo no se ve bien, "
+                "se infieren los pasos alternos a partir del pie con mejor detección."
             ),
             "read": "Mayor cadencia = pasos más rápidos. En velocistas suele estar entre 4 y 5,5 pasos/s.",
         },
@@ -100,6 +98,18 @@ def _variables(context: GlossaryContext) -> list[dict[str, str]]:
             ),
         },
     ]
+    if context.step_count is not None:
+        variables.insert(
+            4,
+            {
+                "name": "Pasos estimados",
+                "unit": "pasos",
+                "value": str(context.step_count),
+                "meaning": "Estimación del total de pasos durante el tramo analizado.",
+                "how": "Se multiplica la cadencia estimada por la duración del tramo.",
+                "read": "Es una estimación automática y puede variar si el video no muestra claramente los apoyos.",
+            },
+        )
     if context.detection_coverage:
         variables.append(
             {

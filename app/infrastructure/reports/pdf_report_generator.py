@@ -98,10 +98,12 @@ class PdfReportGenerator(ReportGenerator):
             ["Variable", "Valor"],
             ["Velocidad promedio", f"{metrics.average_speed:.2f} m/s"],
             ["Velocidad máxima", f"{metrics.maximum_speed:.2f} m/s"],
-            ["Longitud de zancada", f"{metrics.stride_length:.2f} m"],
-            ["Cadencia", f"{metrics.cadence:.2f} pasos/s"],
+            ["Longitud media del paso", f"{metrics.stride_length:.2f} m"],
+            ["Cadencia promedio", f"{metrics.cadence:.2f} pasos/s"],
             ["Postura", f"{metrics.posture_score:.1f} %"],
         ]
+        if metrics.step_count is not None:
+            data.insert(5, ["Pasos estimados", str(metrics.step_count)])
         coverage = self._detection_coverage(report_data)
         if coverage:
             data.append(["Cuadros con detección del atleta", coverage])

@@ -86,9 +86,19 @@ def test_calculate_detects_steps_of_both_feet_and_stride_length() -> None:
     result = calculator.calculate(_running_pose_results(), _linear_calibrator(100.0))
 
     assert result.cadence == pytest.approx(5.0, abs=0.3)
+    assert result.step_count == 14
     # longitud de paso = 3 m/s / 5 pasos/s
     assert result.stride_length == pytest.approx(0.6, abs=0.05)
     assert result.average_speed == pytest.approx(3.0, abs=0.05)
+
+
+def test_eight_steps_in_two_seconds_are_not_reported_as_four_total_steps() -> None:
+    pose_results = _running_pose_results(steps_per_second=4.0)[:60]
+
+    result = BiomechanicalMetricsCalculator().calculate(pose_results, _linear_calibrator(100.0))
+
+    assert result.cadence == pytest.approx(4.0, abs=0.2)
+    assert result.step_count == 8
 
 
 def test_speed_is_not_inflated_by_detector_jitter() -> None:

@@ -220,7 +220,12 @@ class FakeMetricsCalculator(MetricsCalculator):
         ]
 
 
-def _existing_video(total_frames: int = 45, width: int | None = 1920) -> Video:
+def _existing_video(
+    total_frames: int = 45,
+    width: int | None = 1920,
+    run_start_s: float | None = None,
+    run_end_s: float | None = None,
+) -> Video:
     return Video(
         id=1,
         test_id=1,
@@ -229,6 +234,8 @@ def _existing_video(total_frames: int = 45, width: int | None = 1920) -> Video:
         file_size=1024,
         total_frames=total_frames,
         width=width,
+        run_start_s=run_start_s,
+        run_end_s=run_end_s,
         status=VideoStatus.VALIDATED,
     )
 
@@ -351,6 +358,31 @@ async def test_process_video_frames_calculates_metrics_with_timestamps_and_calib
     assert timestamps[-1] > timestamps[0]
     assert metrics_calculator.received_calibrator is not None
     assert metrics_calculator.received_calibrator.pixel_to_world(192.0, 0.0) == pytest.approx((1.0, 0.0))
+
+
+async def test_marked_run_window_limits_summary_metrics_but_keeps_all_frame_metrics() -> None:
+    analysis_repository = FakeAnalysisRepository()
+    analysis_id = await _create_pending_analysis(analysis_repository)
+    metrics_calculator = FakeMetricsCalculator()
+    frame_metrics_repository = FakeFrameMetricsRepository()
+    use_case = _build_use_case(
+        analysis_repository=analysis_repository,
+        video_repository=FakeVideoRepository(
+            [_existing_video(total_frames=45, run_start_s=0.5, run_end_s=1.0)]
+        ),
+        frame_processor=FakeFrameProcessor(frame_count=45, fps=30.0),
+        metrics_calculator=metrics_calculator,
+        frame_metrics_repository=frame_metrics_repository,
+    )
+
+    await use_case.execute(analysis_id=analysis_id, video_id=1)
+
+    assert metrics_calculator.received_pose_results is not None
+    assert all(0.5 <= pose.timestamp <= 1.0 for pose in metrics_calculator.received_pose_results)
+    assert len(frame_metrics_repository.bulk_create_calls[0]) == 45
+    assert use_case.metrics_result is not None
+    assert use_case.metrics_result.average_speed == pytest.approx(20.0)
+    assert use_case.metrics_result.step_count == 2
 
 
 async def test_process_video_frames_persists_metrics_and_frame_metrics() -> None:

@@ -18,6 +18,7 @@ class SqlAlchemyMetricsRepository(MetricsRepository):
             stride_length=metrics.stride_length,
             cadence=metrics.cadence,
             posture_score=metrics.posture_score,
+            step_count=metrics.step_count,
         )
         self._session.add(model)
         await self._session.commit()
@@ -41,5 +42,6 @@ class SqlAlchemyMetricsRepository(MetricsRepository):
             stride_length=model.stride_length,
             cadence=model.cadence,
             posture_score=model.posture_score,
+            step_count=model.step_count,
             created_at=model.created_at,
         )
