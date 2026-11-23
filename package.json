@@ -1,0 +1,8 @@
+{
+  "name": "athletic-proyect",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "npm --prefix frontend ci && npm --prefix frontend run build"
+  }
+}
