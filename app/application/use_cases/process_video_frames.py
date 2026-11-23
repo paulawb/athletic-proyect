@@ -32,6 +32,11 @@ _MAX_PLAUSIBLE_SPEED_MS = 15.0
 _MIN_VALID_HIP_FRAMES = 3
 _MIN_POSE_COVERAGE = 0.2
 _MIN_CADENCE_STEPS_PER_SECOND = 0.5
+# Short acceleration trials should not silently report a six-step estimate for
+# 10 m (1.67 m/step). Reject low-coverage or inconsistent foot-strike estimates
+# rather than publishing a misleading step length.
+_MAX_SHORT_TRIAL_STEP_LENGTH_M = 1.6
+_MAX_SHORT_TRIAL_DISTANCE_M = 20.0
 
 
 def _analysis_frame_step(fps: float | None) -> int:
@@ -65,6 +70,19 @@ def _has_valid_hips(result: PoseEstimationResult) -> bool:
         and left.confidence >= 0.35
         and right.confidence >= 0.35
     )
+
+
+def _distance_per_detected_step(distance_m: float, step_count: int | None) -> float:
+    if not math.isfinite(distance_m) or distance_m <= 0 or step_count is None or step_count <= 0:
+        raise VideoProcessingError("No se pudo determinar una cantidad válida de pasos detectados.")
+    step_length = distance_m / step_count
+    if distance_m <= _MAX_SHORT_TRIAL_DISTANCE_M and step_length > _MAX_SHORT_TRIAL_STEP_LENGTH_M:
+        raise VideoProcessingError(
+            f"Solo se detectaron {step_count} pasos para {distance_m:g} m (promedio {step_length:.2f} m/paso). "
+            "El conteo no parece fiable; no se guardaron métricas. Sube un video donde se vean claramente "
+            "ambos pies durante toda la salida y el recorrido."
+        )
+    return step_length
 
 
 class ProcessVideoFrames:
@@ -252,9 +270,19 @@ class ProcessVideoFrames:
                 self.metrics_result,
                 average_speed=average_speed,
                 maximum_speed=max(self.metrics_result.maximum_speed, average_speed),
-                stride_length=average_speed / self.metrics_result.cadence,
                 step_count=max(1, round(self.metrics_result.cadence * duration_s)),
             )
+
+        # For short trials calculate mean step length from the known trial
+        # distance and the detected step count, not the partial distance between
+        # detected foot-strike peaks. This makes the displayed count and length
+        # internally consistent (10 m / 7 steps = 1.43 m/step). If the inferred
+        # count implies an implausible acceleration step length, fail instead of
+        # silently showing a misleading value.
+        self.metrics_result = dataclasses.replace(
+            self.metrics_result,
+            stride_length=_distance_per_detected_step(reference_distance_m, self.metrics_result.step_count),
+        )
 
         await self._metrics_repository.create(
             Metrics(
