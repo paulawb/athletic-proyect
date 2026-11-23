@@ -1,4 +1,8 @@
+from pathlib import Path
 from typing import Iterator
+import os
+import subprocess
+import tempfile
 
 import cv2
 import numpy as np
@@ -6,29 +10,90 @@ import numpy as np
 from app.domain.services.frame_processor import FrameProcessor, VideoMetadata
 
 
-class OpenCVFrameProcessor(FrameProcessor):
-    """Primera implementacion real de FrameProcessor (seccion 8), con OpenCV.
+def _transcode_for_browser(video_path: str) -> bool:
+    """Convert phone-recorded HEVC/MOV media to browser-compatible H264 MP4."""
+    source = Path(video_path)
+    if not source.is_file():
+        return False
 
-    get_video_metadata() es lo que usa la Fase 3 para validar el video recien
-    subido (duracion, fps, resolucion, total de cuadros) sin leerlo cuadro
-    por cuadro. iterate_frames() ya queda lista para el pipeline de analisis
-    de la Fase 4, que sí recorre el video completo, un cuadro a la vez y sin
-    cargarlo entero en memoria.
-    """
+    fd, temp_name = tempfile.mkstemp(suffix=".mp4", dir=str(source.parent))
+    os.close(fd)
+    temp_path = Path(temp_name)
+
+    command = [
+        "ffmpeg", "-y", "-v", "error", "-i", str(source),
+        "-map", "0:v:0", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        "-c:a", "aac", "-b:a", "128k", str(temp_path),
+    ]
+    try:
+        completed = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
+        if completed.returncode != 0 or temp_path.stat().st_size <= 0:
+            temp_path.unlink(missing_ok=True)
+            return False
+        os.replace(temp_path, source)
+        return True
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        temp_path.unlink(missing_ok=True)
+        return False
+
+
+def _fourcc_name(capture: cv2.VideoCapture) -> str:
+    raw = int(capture.get(cv2.CAP_PROP_FOURCC))
+    return "".join(chr((raw >> (8 * i)) & 0xFF) for i in range(4)).lower()
+
+
+class OpenCVFrameProcessor(FrameProcessor):
+    """Reads uploaded videos and normalizes supported phone codecs for browsers."""
 
     def get_video_metadata(self, video_path: str) -> VideoMetadata:
+        source = Path(video_path)
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
             capture.release()
             raise ValueError(f"No se pudo abrir el video: {video_path}")
+
         try:
+            codec = _fourcc_name(capture)
             total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
             fps = float(capture.get(cv2.CAP_PROP_FPS)) or 0.0
             width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
             duration = (total_frames / fps) if fps > 0 else 0.0
+        finally:
+            capture.release()
+
+        needs_conversion = source.suffix.lower() == ".mov" or codec in {"hev1", "hvc1", "hevc", "hev ", "vp09", "av01"}
+        if needs_conversion:
+            _transcode_for_browser(video_path)
+
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            capture.release()
+            raise ValueError(f"No se pudo abrir el video normalizado: {video_path}")
+        try:
+            total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = float(capture.get(cv2.CAP_PROP_FPS)) or 0.0
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            duration = (total_frames / fps) if fps > 0 else duration
+            if duration <= 0:
+                last_position = 0.0
+                while True:
+                    success, _ = capture.read()
+                    if not success:
+                        break
+                    position = float(capture.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
+                    if position > 0:
+                        last_position = position
+                duration = last_position / 1000
             return VideoMetadata(
-                total_frames=total_frames, fps=fps, duration=duration, width=width, height=height
+                total_frames=total_frames,
+                fps=fps,
+                duration=duration,
+                width=width,
+                height=height,
             )
         finally:
             capture.release()
@@ -38,6 +103,7 @@ class OpenCVFrameProcessor(FrameProcessor):
         if not capture.isOpened():
             capture.release()
             raise ValueError(f"No se pudo abrir el video: {video_path}")
+
         fps = float(capture.get(cv2.CAP_PROP_FPS)) or 0.0
         frame_number = 0
         previous_timestamp = -1.0
@@ -46,9 +112,7 @@ class OpenCVFrameProcessor(FrameProcessor):
                 success, frame = capture.read()
                 if not success:
                     break
-                # Los videos de celular suelen ser de frecuencia variable: el
-                # tiempo real de cada cuadro (el que usa el navegador al
-                # reproducir) no es siempre frame_number / fps.
+
                 position_ms = float(capture.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
                 if frame_number == 0:
                     timestamp = max(position_ms, 0.0) / 1000
@@ -56,6 +120,7 @@ class OpenCVFrameProcessor(FrameProcessor):
                     timestamp = position_ms / 1000
                 else:
                     timestamp = (frame_number / fps) if fps > 0 else 0.0
+
                 if timestamp <= previous_timestamp:
                     timestamp = previous_timestamp + ((1 / fps) if fps > 0 else 0.001)
                 previous_timestamp = timestamp

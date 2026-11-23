@@ -79,6 +79,24 @@ async def get_video_content(
     path = Path(LocalVideoStorage(get_settings().storage_local_path).get_absolute_path(video.storage_path))
     if not path.is_file():
         raise HTTPException(status_code=404, detail="El archivo del video no está disponible")
-    # Los .mov de celular suelen ser H.264 en contenedor QuickTime; los
-    # navegadores los reproducen mejor etiquetados como video/mp4.
-    return FileResponse(path, media_type="video/mp4", filename=video.original_filename)
+
+    suffix = path.suffix.lower()
+    if suffix == ".mov":
+        media_type = "video/quicktime"
+    elif suffix == ".webm":
+        media_type = "video/webm"
+    else:
+        media_type = "video/mp4"
+
+    # Keep the original media type/container and let browsers request byte ranges
+    # to seek and resume playback. HEVC compatibility still depends on the client.
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=video.original_filename,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": f'inline; filename="{video.original_filename}"',
+            "Cache-Control": "private, no-cache",
+        },
+    )
