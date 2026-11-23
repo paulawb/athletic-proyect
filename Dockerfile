@@ -10,15 +10,15 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# libgl1 / libglib2.0-0: dependencias de OpenCV (Fase 4).
-# libsm6 / libxext6 / libgomp1: dependencias tipicas de MediaPipe (Fase 9)
-# sobre imagenes "slim" de Debian, ademas de las de OpenCV de arriba.
+# OpenCV, MediaPipe y FFmpeg: procesamiento del video, detección de pose y
+# transcodificación de HEVC/H.265 a H.264 para navegadores compatibles.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libgomp1 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
