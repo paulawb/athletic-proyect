@@ -10,15 +10,15 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# OpenCV, MediaPipe y FFmpeg: procesamiento del video, detección de pose y
-# transcodificación de HEVC/H.265 a H.264 para navegadores compatibles.
+# OpenCV / MediaPipe runtime libraries and FFmpeg for normalizing uploaded
+# phone videos (HEVC/H.265, MOV) to browser-compatible H.264 MP4.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libgomp1 \
-    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
