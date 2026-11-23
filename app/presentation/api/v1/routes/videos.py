@@ -18,7 +18,7 @@ from app.infrastructure.video.opencv_frame_processor import OpenCVFrameProcessor
 from app.presentation.api.v1.dependencies import get_current_user
 from app.presentation.api.v1.ownership import require_owned_test, require_owned_video, user_id
 
-router = APIRouter(prefix="/api/v1", tags="videos"])
+router = APIRouter(prefix="/api/v1", tags=["videos"])
 
 
 def _build_upload_use_case(session: AsyncSession) -> UploadVideo:
@@ -88,9 +88,8 @@ async def get_video_content(
     else:
         media_type = "video/mp4"
 
-    # Content-Disposition inline keeps the browser as the player. The explicit
-    # cache and range headers prevent an old/partial response from being shown
-    # as a black, unseekable video after the server restarts or a deployment.
+    # Keep the original media type/container and let browsers request byte ranges
+    # to seek and resume playback. HEVC compatibility still depends on the client.
     return FileResponse(
         path,
         media_type=media_type,
