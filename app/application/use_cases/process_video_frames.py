@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import logging
+import math
 from typing import Callable
 
 from app.core.exceptions import VideoProcessingError
@@ -32,6 +33,9 @@ _PROGRESS_UPDATE_EVERY = 10
 # Los videos de celular a 60 fps o más no mejoran las métricas con cada cuadro:
 # se estima la pose a ~20 fps o más y se descartan los intermedios.
 _TARGET_ANALYSIS_FPS = 20
+# Un valor por encima de este límite suele indicar una ventana de carrera mal
+# marcada o una duración inferida a partir de detecciones demasiado breves.
+_MAX_PLAUSIBLE_SPEED_MS = 25.0
 
 
 def _analysis_frame_step(fps: float | None) -> int:
@@ -231,11 +235,29 @@ class ProcessVideoFrames:
             else metric_poses
         )
         self.metrics_result = self._metrics_calculator.calculate(summary_poses, calibrator)
-        duration_s = run_duration_seconds(
-            self.pose_results, run_window, use_trajectory_extremes=reference_distance_m < TRACKING_CAMERA_MIN_DISTANCE_M
+
+        # No reemplazar la velocidad calculada por el detector con distancia /
+        # duración inferida del video: una detección breve de la trayectoria
+        # puede convertir, por ejemplo, 10 m en 0.2 s en 50 m/s. Solo usamos
+        # distancia / tiempo cuando el usuario marcó explícitamente salida y
+        # llegada; sin marcas, el calculador ya estima el movimiento a partir
+        # de las poses y sus timestamps.
+        duration_s = (
+            run_duration_seconds(
+                self.pose_results,
+                run_window,
+                use_trajectory_extremes=reference_distance_m < TRACKING_CAMERA_MIN_DISTANCE_M,
+            )
+            if run_window is not None
+            else None
         )
         if duration_s is not None:
             average_speed = reference_distance_m / duration_s
+            if not math.isfinite(average_speed) or average_speed > _MAX_PLAUSIBLE_SPEED_MS:
+                raise VideoProcessingError(
+                    "La velocidad calculada no es plausible. Revisa la distancia de la prueba "
+                    "y que las marcas de salida y llegada abarquen todo el recorrido."
+                )
             step_count = (
                 max(1, round(self.metrics_result.cadence * duration_s))
                 if self.metrics_result.cadence > 0
@@ -252,6 +274,18 @@ class ProcessVideoFrames:
                 ),
                 step_count=step_count,
             )
+
+        if (
+            not math.isfinite(self.metrics_result.average_speed)
+            or not math.isfinite(self.metrics_result.maximum_speed)
+            or self.metrics_result.average_speed > _MAX_PLAUSIBLE_SPEED_MS
+            or self.metrics_result.maximum_speed > _MAX_PLAUSIBLE_SPEED_MS
+        ):
+            raise VideoProcessingError(
+                "La velocidad calculada no es plausible. Comprueba la distancia, el encuadre "
+                "y la detección del atleta; no se guardaron métricas para evitar resultados engañosos."
+            )
+
         await self._metrics_repository.create(
             Metrics(
                 analysis_id=analysis_id,
