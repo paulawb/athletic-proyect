@@ -1,5 +1,5 @@
 {
-  "name": "athletic-proyect",
+  "name": "fix-video-playback-and-metric-validation-athletic-proyect",
   "compatibility_date": "2025-01-01",
   "assets": {
     "directory": "./frontend/dist",
