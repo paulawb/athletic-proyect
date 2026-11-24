@@ -14,6 +14,13 @@ class VideoProcessingError(AthleticAnalysisError):
     pass
 
 
+class AnalysisNoLongerActiveError(ValueError):
+    """El analisis ya no esta en PENDING/PROCESSING: lo eliminaron, se marco
+    como fallido por inactividad o ya termino. Quien lo procesa debe parar
+    sin volver a escribir su estado. Hereda de ValueError para conservar el
+    contrato anterior de update_progress (ValueError si no existe)."""
+
+
 class AnalysisNotFoundError(AthleticAnalysisError):
     pass
 

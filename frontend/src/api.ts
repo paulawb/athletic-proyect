@@ -18,17 +18,34 @@ async function apiError(response: Response, fallback: string): Promise<ApiError>
   return new ApiError(detail || fallback, response.status);
 }
 
+// El servidor gratuito de Render se apaga tras unos minutos sin uso y tarda
+// cerca de un minuto en volver a arrancar; también se reinicia si se queda sin
+// memoria. Las consultas (GET) se reintentan solas antes de mostrar el error.
+// Las peticiones que crean o borran datos no se reintentan para no duplicarlas.
+const RETRY_DELAYS_MS = [3000, 8000, 15000];
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  try {
-    return await fetch(input, init);
-  } catch (error) {
-    if (error instanceof TypeError) {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const delays = method === "GET" ? RETRY_DELAYS_MS : [];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      if (attempt < delays.length) {
+        window.dispatchEvent(new CustomEvent("athletic:api-retrying", { detail: { attempt: attempt + 1 } }));
+        await wait(delays[attempt]);
+        continue;
+      }
       throw new ApiError(
-        `No se pudo conectar con la API ${API_ORIGIN || "de la aplicación"}. Comprueba que el servidor esté iniciado y que permita el acceso desde esta dirección.`,
+        `No se pudo conectar con el servidor ${API_ORIGIN || "de la aplicación"}. Puede estar iniciándose o reiniciándose: espera un minuto y vuelve a intentarlo.`,
         0,
       );
     }
-    throw error;
   }
 }
 

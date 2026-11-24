@@ -4,7 +4,7 @@ import pytest
 
 from app.application.use_cases.get_analysis import GetAnalysis
 from app.application.use_cases.process_video_frames import ProcessVideoFrames
-from app.core.exceptions import AnalysisNotFoundError
+from app.core.exceptions import AnalysisNoLongerActiveError, AnalysisNotFoundError
 from app.domain.entities.analysis import Analysis, AnalysisStatus
 from app.domain.entities.frame_metrics import FrameMetrics
 from app.domain.entities.metrics import Metrics
@@ -273,6 +273,7 @@ def _build_use_case(
     pose_estimator=None,
     metrics_calculator=None,
     calibrator_factory=None,
+    max_duration_seconds=None,
 ) -> ProcessVideoFrames:
     return ProcessVideoFrames(
         video_repository=video_repository or FakeVideoRepository([_existing_video()]),
@@ -285,6 +286,7 @@ def _build_use_case(
         pose_estimator=pose_estimator or FakePoseEstimator(),
         metrics_calculator=metrics_calculator or FakeMetricsCalculator(),
         calibrator_factory=calibrator_factory or _default_calibrator_factory,
+        max_duration_seconds=max_duration_seconds,
     )
 
 
@@ -473,3 +475,41 @@ async def test_process_video_frames_marks_failed_on_read_error() -> None:
 async def test_get_analysis_raises_when_not_found() -> None:
     with pytest.raises(AnalysisNotFoundError):
         await GetAnalysis(FakeAnalysisRepository()).execute(999)
+
+
+class DeletedMidwayAnalysisRepository(FakeAnalysisRepository):
+    """Simula que el docente elimina el analisis mientras se procesa: el
+    primer reporte de progreso posterior al inicio encuentra que ya no existe."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.updates = 0
+
+    async def update_progress(self, analysis_id, status, processed_frames, error_message=None):
+        self.updates += 1
+        if self.updates > 1:
+            raise AnalysisNoLongerActiveError(f"El analisis id={analysis_id} ya no esta en proceso")
+        return await super().update_progress(analysis_id, status, processed_frames, error_message)
+
+
+async def test_process_video_frames_stops_quietly_when_analysis_is_deleted() -> None:
+    analysis_repository = DeletedMidwayAnalysisRepository()
+    analysis_id = await _create_pending_analysis(analysis_repository)
+    metrics_repository = FakeMetricsRepository()
+    use_case = _build_use_case(analysis_repository=analysis_repository, metrics_repository=metrics_repository)
+
+    result = await use_case.execute(analysis_id=analysis_id, video_id=1)
+
+    assert result is None
+    assert metrics_repository.created == []
+
+
+async def test_process_video_frames_fails_when_it_exceeds_the_maximum_time() -> None:
+    analysis_repository = FakeAnalysisRepository()
+    analysis_id = await _create_pending_analysis(analysis_repository)
+    use_case = _build_use_case(analysis_repository=analysis_repository, max_duration_seconds=-1)
+
+    analysis = await use_case.execute(analysis_id=analysis_id, video_id=1)
+
+    assert analysis.status == AnalysisStatus.FAILED
+    assert "tiempo máximo" in analysis.error_message

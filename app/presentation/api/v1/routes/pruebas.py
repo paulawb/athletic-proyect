@@ -99,7 +99,7 @@ async def list_tests(
         )
 
     query = (
-        select(TestModel, latest_status, MetricsModel)
+        select(TestModel, latest_status, latest_analysis_id.label("analysis_id"), MetricsModel)
         .join(AthleteModel, AthleteModel.id == TestModel.athlete_id)
         .outerjoin(MetricsModel, MetricsModel.analysis_id == latest_analysis_id)
     )
@@ -113,9 +113,10 @@ async def list_tests(
         await session.execute(query.order_by(TestModel.created_at.desc()).offset(skip).limit(limit))
     ).all()
     response = []
-    for test, analysis_state, metrics in rows:
+    for test, analysis_state, analysis_id, metrics in rows:
         result = TestResponseDTO.model_validate(test)
         result.analysis_status = analysis_state
+        result.analysis_id = analysis_id
         if metrics:
             result.average_speed = metrics.average_speed
             result.maximum_speed = metrics.maximum_speed

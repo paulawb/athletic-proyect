@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     track_lane_width_m: float = 1.22
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Ademas de la lista anterior, acepta cualquier subdominio de la cuenta de
+    # Cloudflare Workers donde se publica el frontend (las URL de vista previa
+    # cambian con cada despliegue). Vacio = desactivado.
+    cors_origin_regex: str = r"https://([a-z0-9-]+\.)*paulawilchesbuitrago\.workers\.dev"
+
+    # Un analisis sin avance durante analysis_stale_minutes se marca FAILED
+    # (el servidor se reinicio o el hilo murio). analysis_timeout_minutes es
+    # el tiempo maximo total de procesamiento de un video.
+    analysis_stale_minutes: float = 5
+    analysis_timeout_minutes: float = 15
 
     log_level: str = "INFO"
 
