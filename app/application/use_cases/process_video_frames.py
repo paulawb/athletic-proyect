@@ -42,6 +42,14 @@ def _analysis_frame_step(fps: float | None) -> int:
 
 _ITERATOR_EXHAUSTED = object()
 
+# Una carrera real de velocidad no se cubre en menos de este tiempo: marcas de
+# salida y llegada más juntas producen velocidades imposibles (ej. 1000 m/s).
+MIN_RUN_WINDOW_SECONDS = 0.5
+# Ninguna persona supera esta velocidad en una carrera (el récord humano ronda
+# los 12,4 m/s en su punto máximo). Un valor mayor indica un error de marcas,
+# de calibración o de detección, y no se debe mostrar como resultado.
+MAX_PLAUSIBLE_SPEED_MPS = 13.0
+
 # El calibrador depende de datos propios de cada video (ancho/alto) y de la
 # prueba (distancia de referencia), asi que no se puede construir una sola
 # vez como pose_estimator o metrics_calculator -por eso se inyecta una
@@ -279,6 +287,13 @@ class ProcessVideoFrames:
                     else self.metrics_result.stride_length
                 ),
                 step_count=step_count,
+            )
+        if self.metrics_result.average_speed > MAX_PLAUSIBLE_SPEED_MPS:
+            raise VideoProcessingError(
+                f"la velocidad calculada ({self.metrics_result.average_speed:.1f} m/s) es imposible para "
+                "una persona. Revisa que las marcas de salida y llegada correspondan al inicio y al final "
+                "de la carrera, que la distancia de la prueba sea la correcta y que solo el atleta aparezca "
+                "en el video"
             )
         await self._metrics_repository.create(
             Metrics(
