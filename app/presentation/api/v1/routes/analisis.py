@@ -14,7 +14,11 @@ from app.application.use_cases.create_analysis import CreateAnalysis
 from app.application.use_cases.generate_analysis_report import GenerateAnalysisReport
 from app.application.use_cases.get_analysis import GetAnalysis
 from app.application.use_cases.get_analysis_metrics import GetAnalysisMetrics
-from app.application.use_cases.process_video_frames import CalibratorFactory, ProcessVideoFrames
+from app.application.use_cases.process_video_frames import (
+    MIN_RUN_WINDOW_SECONDS,
+    CalibratorFactory,
+    ProcessVideoFrames,
+)
 from app.application.use_cases.upload_video import UploadVideo
 from app.domain.dto.process_video_dto import ProcessVideoResponseDTO
 from app.core.config import Settings, get_settings
@@ -429,6 +433,15 @@ async def upload_and_queue_analysis(
         raise HTTPException(
             status_code=422,
             detail="Indica el segundo de salida y el de llegada, y la llegada debe ser posterior a la salida",
+        )
+    if run_start_s is not None and run_end_s is not None and run_end_s - run_start_s < MIN_RUN_WINDOW_SECONDS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "La salida y la llegada están demasiado juntas: deben estar separadas al menos "
+                f"{MIN_RUN_WINDOW_SECONDS:g} segundos. Marca la salida cuando el atleta arranca y "
+                "la llegada cuando cruza la marca final."
+            ),
         )
     await require_owned_test(session, test_id, user_id(current_user))
     settings = get_settings()

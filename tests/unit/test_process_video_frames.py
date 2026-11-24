@@ -370,7 +370,7 @@ async def test_marked_run_window_limits_summary_metrics_but_keeps_all_frame_metr
     use_case = _build_use_case(
         analysis_repository=analysis_repository,
         video_repository=FakeVideoRepository(
-            [_existing_video(total_frames=45, run_start_s=0.5, run_end_s=1.0)]
+            [_existing_video(total_frames=45, run_start_s=0.5, run_end_s=1.4)]
         ),
         frame_processor=FakeFrameProcessor(frame_count=45, fps=30.0),
         metrics_calculator=metrics_calculator,
@@ -380,11 +380,11 @@ async def test_marked_run_window_limits_summary_metrics_but_keeps_all_frame_metr
     await use_case.execute(analysis_id=analysis_id, video_id=1)
 
     assert metrics_calculator.received_pose_results is not None
-    assert all(0.5 <= pose.timestamp <= 1.0 for pose in metrics_calculator.received_pose_results)
+    assert all(0.5 <= pose.timestamp <= 1.4 for pose in metrics_calculator.received_pose_results)
     assert len(frame_metrics_repository.bulk_create_calls[0]) == 45
     assert use_case.metrics_result is not None
-    assert use_case.metrics_result.average_speed == pytest.approx(20.0)
-    assert use_case.metrics_result.step_count == 2
+    assert use_case.metrics_result.average_speed == pytest.approx(10 / 0.9)
+    assert use_case.metrics_result.step_count == 4
 
 
 async def test_process_video_frames_persists_metrics_and_frame_metrics() -> None:
@@ -513,3 +513,25 @@ async def test_process_video_frames_fails_when_it_exceeds_the_maximum_time() -> 
 
     assert analysis.status == AnalysisStatus.FAILED
     assert "tiempo máximo" in analysis.error_message
+
+
+async def test_process_video_frames_fails_when_the_speed_is_impossible() -> None:
+    """Marcas de salida y llegada separadas una centésima de segundo daban
+    1000 m/s en la pantalla de resultados; ahora el análisis queda FAILED."""
+    analysis_repository = FakeAnalysisRepository()
+    analysis_id = await _create_pending_analysis(analysis_repository)
+    metrics_repository = FakeMetricsRepository()
+    use_case = _build_use_case(
+        analysis_repository=analysis_repository,
+        video_repository=FakeVideoRepository(
+            [_existing_video(total_frames=45, run_start_s=0.5, run_end_s=0.51)]
+        ),
+        frame_processor=FakeFrameProcessor(frame_count=45, fps=30.0),
+        metrics_repository=metrics_repository,
+    )
+
+    analysis = await use_case.execute(analysis_id=analysis_id, video_id=1)
+
+    assert analysis.status == AnalysisStatus.FAILED
+    assert "imposible" in analysis.error_message
+    assert metrics_repository.created == []
