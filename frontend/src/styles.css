@@ -221,3 +221,7 @@ td.code{font-weight:700;color:#3459ad}
 
 @media(max-width:1100px){.detail-grid{grid-template-columns:1fr}.timeline-grid{grid-template-columns:1fr 1fr}.test-filters{width:100%}.athlete-filters{width:100%}}
 @media(max-width:760px){.toolbar-actions{width:100%;flex-wrap:wrap}.toolbar-actions .button{flex:1;padding:0 8px;font-size:10px}.athlete-filters select,.test-filters select{flex:1;min-width:calc(50% - 8px)}.date-filter{flex:1}.date-filter input{flex:1;min-width:0}.timeline-grid{grid-template-columns:1fr}.feedback-grid{grid-template-columns:1fr}.password-form{grid-template-columns:1fr!important}.password-form>div{grid-column:auto}.metric-options{grid-template-columns:1fr 1fr}.settings-content .settings-form{padding:16px}.logo-upload{flex-wrap:wrap}.logo-upload>span{width:100%}.pagination .button{height:34px;padding:0 10px}}
+
+/* Acciones por fila en la tabla de pruebas (ver / eliminar) */
+.row-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; white-space: nowrap; }
+.row-actions .button { padding: 6px 10px; min-height: 0; }

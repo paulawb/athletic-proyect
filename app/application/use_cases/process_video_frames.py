@@ -1,9 +1,10 @@
 import asyncio
 import dataclasses
 import logging
+import time
 from typing import Callable
 
-from app.core.exceptions import VideoProcessingError
+from app.core.exceptions import AnalysisNoLongerActiveError, VideoProcessingError
 from app.domain.entities.analysis import Analysis, AnalysisStatus
 from app.domain.entities.frame_metrics import FrameMetrics
 from app.domain.entities.metrics import Metrics
@@ -99,6 +100,7 @@ class ProcessVideoFrames:
         pose_estimator: PoseEstimator,
         metrics_calculator: MetricsCalculator,
         calibrator_factory: CalibratorFactory,
+        max_duration_seconds: float | None = None,
     ) -> None:
         self._video_repository = video_repository
         self._test_repository = test_repository
@@ -110,10 +112,22 @@ class ProcessVideoFrames:
         self._pose_estimator = pose_estimator
         self._metrics_calculator = metrics_calculator
         self._calibrator_factory = calibrator_factory
+        # Tiempo maximo de procesamiento de un video; None = sin limite.
+        self._max_duration_seconds = max_duration_seconds
         self.pose_results: list[PoseEstimationResult] = []
         self.metrics_result: MetricsResult | None = None
 
-    async def execute(self, analysis_id: int, video_id: int) -> Analysis:
+    async def execute(self, analysis_id: int, video_id: int) -> Analysis | None:
+        """Devuelve None si el analisis dejo de estar activo mientras se
+        procesaba (lo eliminaron o se marco como fallido por inactividad):
+        en ese caso se detiene sin volver a escribir su estado."""
+        try:
+            return await self._execute(analysis_id, video_id)
+        except AnalysisNoLongerActiveError:
+            logger.info("El analisis id=%s ya no esta activo; se detiene su procesamiento", analysis_id)
+            return None
+
+    async def _execute(self, analysis_id: int, video_id: int) -> Analysis:
         video = await self._video_repository.get_by_id(video_id)
         if video is None:
             # CreateAnalysis ya valido que el video existiera al crear este
@@ -132,6 +146,7 @@ class ProcessVideoFrames:
         self.metrics_result = None
         frame_iterator = self._frame_processor.iterate_frames(absolute_path)
         frame_step = _analysis_frame_step(video.fps)
+        started = time.monotonic()
 
         try:
             try:
@@ -160,6 +175,15 @@ class ProcessVideoFrames:
                         self.pose_results.append(dataclasses.replace(pose_result, timestamp=timestamp))
 
                     if processed_frames % _PROGRESS_UPDATE_EVERY == 0:
+                        if (
+                            self._max_duration_seconds is not None
+                            and time.monotonic() - started > self._max_duration_seconds
+                        ):
+                            raise VideoProcessingError(
+                                "El procesamiento superó el tiempo máximo de "
+                                f"{self._max_duration_seconds / 60:g} minutos. Elimina este análisis y "
+                                "vuelve a intentarlo con un video más corto o de menor resolución."
+                            )
                         await self._analysis_repository.update_progress(
                             analysis_id, AnalysisStatus.PROCESSING, processed_frames
                         )
@@ -169,6 +193,8 @@ class ProcessVideoFrames:
                 # recorrido. MockPoseEstimator no tiene nada que liberar
                 # (close() por defecto es un no-op en la interfaz).
                 self._pose_estimator.close()
+        except AnalysisNoLongerActiveError:
+            raise
         except Exception as exc:
             logger.exception("Fallo el procesamiento del analisis id=%s", analysis_id)
             return await self._analysis_repository.update_progress(
@@ -189,6 +215,8 @@ class ProcessVideoFrames:
 
         try:
             await self._calculate_and_persist_metrics(video, analysis_id)
+        except AnalysisNoLongerActiveError:
+            raise
         except Exception as exc:
             logger.exception("Fallo el calculo de metricas del analisis id=%s", analysis_id)
             return await self._analysis_repository.update_progress(

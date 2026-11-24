@@ -24,6 +24,7 @@ class TestResponseDTO(BaseModel):
     status: TestStatus
     created_at: datetime | None = None
     analysis_status: str | None = None
+    analysis_id: int | None = None
     average_speed: float | None = None
     maximum_speed: float | None = None
     stride_length: float | None = None

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import AnalysisNoLongerActiveError
 from app.domain.entities.analysis import Analysis, AnalysisStatus
 from app.domain.repositories.analysis_repository import AnalysisRepository
 from app.infrastructure.database.models.analysis_model import AnalysisModel
@@ -74,16 +75,24 @@ class SqlAlchemyAnalysisRepository(AnalysisRepository):
         if status in (AnalysisStatus.COMPLETED, AnalysisStatus.FAILED):
             values["completed_at"] = now
 
+        # Solo se actualiza un analisis que siga activo: si lo eliminaron o ya
+        # se marco como fallido (por ejemplo, por inactividad), el procesamiento
+        # no debe "revivirlo" ni sobrescribir su estado.
         result = await self._session.execute(
             update(AnalysisModel)
-            .where(AnalysisModel.id == analysis_id)
+            .where(
+                AnalysisModel.id == analysis_id,
+                func.upper(AnalysisModel.status).in_(("PENDING", "PROCESSING")),
+            )
             .values(**values)
             .returning(AnalysisModel)
         )
         try:
             model = result.scalar_one()
         except NoResultFound as exc:
-            raise ValueError(f"No existe un analisis con id={analysis_id}") from exc
+            raise AnalysisNoLongerActiveError(
+                f"El analisis id={analysis_id} no existe o ya no esta en proceso"
+            ) from exc
 
         await self._session.commit()
         return self._to_entity(model)

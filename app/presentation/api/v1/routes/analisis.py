@@ -43,6 +43,7 @@ from app.infrastructure.metrics.biomechanical_metrics_calculator import Biomecha
 from app.infrastructure.reports.glossary_report_generator import GlossaryContext, GlossaryReportGenerator
 from app.infrastructure.reports.pdf_report_generator import PdfReportGenerator
 from app.infrastructure.tasks.background_tasks_runner import BackgroundTasksRunner
+from app.infrastructure.tasks.processing_queue import run_one_at_a_time
 from app.infrastructure.database.stale_analyses import fail_stale_analyses
 from app.infrastructure.video.local_video_storage import LocalVideoStorage
 from app.infrastructure.video.opencv_frame_processor import OpenCVFrameProcessor
@@ -127,6 +128,7 @@ def _build_process_video_frames_use_case(session: AsyncSession) -> ProcessVideoF
         pose_estimator=_build_pose_estimator(settings),
         metrics_calculator=_build_metrics_calculator(settings),
         calibrator_factory=_build_calibrator_factory(settings),
+        max_duration_seconds=settings.analysis_timeout_minutes * 60,
     )
 
 
@@ -153,7 +155,7 @@ async def create_analysis(
 
     async def _run_processing() -> None:
         use_case = _build_process_video_frames_use_case(session)
-        await use_case.execute(analysis.id, data.video_id)
+        await run_one_at_a_time(analysis.id, lambda: use_case.execute(analysis.id, data.video_id))
 
     task_runner: TaskRunner = BackgroundTasksRunner(background_tasks)
     task_runner.enqueue(_run_processing)
@@ -448,7 +450,7 @@ async def upload_and_queue_analysis(
 
     async def _run_processing() -> None:
         use_case = _build_process_video_frames_use_case(session)
-        await use_case.execute(analysis.id, analysis.video_id)
+        await run_one_at_a_time(analysis.id, lambda: use_case.execute(analysis.id, analysis.video_id))
 
     task_runner: TaskRunner = BackgroundTasksRunner(background_tasks)
     task_runner.enqueue(_run_processing)

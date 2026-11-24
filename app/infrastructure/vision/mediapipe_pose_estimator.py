@@ -1,5 +1,6 @@
 import math
 import os
+import threading
 
 import cv2
 import mediapipe as mp
@@ -36,6 +37,24 @@ _LANDMARK_INDEX: dict[KeypointName, int] = {
 _MIN_LANDMARK_CONFIDENCE = 0.35
 _MAX_DETECTION_SIDE = 640
 _MIN_TORSO_SEPARATION = 0.02
+
+# Hilos que ya bajaron su prioridad (ver _lower_thread_priority).
+_low_priority_threads: set[int] = set()
+
+
+def _lower_thread_priority() -> None:
+    """Baja la prioridad del hilo que estima la pose. En el plan gratuito de
+    Render la CPU es muy limitada: si el procesamiento la acapara, el servidor
+    deja de responder a tiempo a las peticiones y a la verificacion de salud,
+    y Render lo reinicia. Solo aplica en Linux; en otros sistemas no hace nada."""
+    thread_id = threading.get_native_id()
+    if thread_id in _low_priority_threads:
+        return
+    _low_priority_threads.add(thread_id)
+    try:
+        os.setpriority(os.PRIO_PROCESS, thread_id, 10)
+    except (AttributeError, OSError):
+        pass
 
 
 def _extract_valid_keypoints(landmarks, width: int, height: int) -> list[Keypoint]:
@@ -138,6 +157,7 @@ class MediaPipePoseEstimator(PoseEstimator):
     def estimate(
         self, frame: np.ndarray, frame_number: int, timestamp_ms: int | None = None
     ) -> PoseEstimationResult:
+        _lower_thread_priority()
         height, width = int(frame.shape[0]), int(frame.shape[1])
         # Los videos de celular (1080p/4K) son lentos y pesados en memoria; el
         # modelo trabaja bien con 960 px de lado mayor. Los puntos salen
